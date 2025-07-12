@@ -149,16 +149,52 @@ sequenceDiagram
     GatewayPod->>CP: 5. 发送指令
 ```
 
-### 4.3. 节点故障转移
+### 4.3. 节点故障转移 (Failover)
 
-Kubernetes 的自愈能力与我们的无状态设计相结合，实现了自动化的故障转移。
+Kubernetes 的自愈能力与我们“无状态网关+外部状态存储”的应用设计相结合，实现了自动化的、无缝的故障转移。这正是本架构高可用设计的核心体现。
 
-1.  **故障检测**: K8s 的 `kubelet` 会检测到某个 Gateway Pod 异常，并将其标记为不健康。`Service` 会自动停止向其转发流量。
-2.  **自动重连**: 充电桩发现 TCP 连接断开，会发起自动重连。
-3.  **重新路由与注册**:
-    *   重连请求通过 L4 负载均衡器被路由到一个新的、健康的 Gateway Pod。
-    *   新的 Gateway Pod 与充电桩建立连接，并**更新 Redis 中的连接映射**，将桩的归属指向自己。
-4.  **系统自愈**: 系统恢复正常，后续的下行指令会通过新的映射关系被正确路由。
+**流程图**:
+
+```mermaid
+sequenceDiagram
+    participant CP as ChargePoint-007
+    participant K8s as Kubernetes (Service & Kubelet)
+    participant Pod1 as Gateway Pod 1 (Failed)
+    participant Pod2 as Gateway Pod 2 (Healthy)
+    participant Redis as Redis Cluster
+
+    note over CP, Redis: 初始状态: CP 连接在 Pod1, Redis 中 conn:CP-007 -> "pod-1"
+
+    K8s--xPod1: 1. Kubelet 健康检查失败
+    note right of K8s: 将 Pod1 标记为不健康<br/>并从 Service 端点中移除
+    
+    CP--xPod1: 2. TCP 连接断开
+
+    CP->>K8s: 3. 发起重连请求 (访问 Service IP)
+    K8s->>Pod2: 4. 将连接路由到健康的 Pod2
+
+    Pod2->>CP: 5. 建立新 WebSocket 连接
+    CP->>Pod2: 6. 发送 BootNotification
+    
+    Pod2->>Pod2: 7. 处理启动逻辑...
+    Pod2->>Redis: 8. **更新连接映射 SET conn:CP-007 "pod-2"**
+    note right of Pod2: 这是应用代码层面<br/>必须实现的关键逻辑！
+    Redis-->>Pod2: OK
+
+    note over CP, Redis: 系统自愈完成。后续下行指令将正确路由到 Pod2。
+```
+
+**工作流程详解**:
+
+1.  **故障检测 (基础设施层)**: K8s 的 `kubelet` 通过健康检查发现 `Gateway Pod 1` 异常。K8s 控制平面会立即将其从 `Service` 的可用端点 (Endpoints) 列表中移除。从此，新的流量不会再被路由到这个故障 Pod。
+2.  **连接中断**: 所有与 `Gateway Pod 1` 保持连接的充电桩会发现 TCP 连接断开。
+3.  **自动重连 (设备层)**: 根据 OCPP 规范，充电桩在连接断开后会立即发起自动重连。它访问的仍然是 K8s `Service` 对外暴露的那个稳定 IP 地址。
+4.  **重新路由 (基础设施层)**: K8s `Service` 接收到重连请求，并将其转发到一个当前健康的 `Gateway Pod`，例如 `Gateway Pod 2`。
+5.  **逻辑恢复 (应用代码层)**:
+    *   `Gateway Pod 2` 接收到新的连接，并处理充电桩发送的第一个 `BootNotification` 消息。
+    *   在处理逻辑中，`Gateway Pod 2` 的代码会**主动地、强制地**去 Redis 中执行 `SET conn:<ChargePointID> <自己的PodID>` 操作。
+    *   这个 `SET` 操作会**覆盖**掉之前由 `Gateway Pod 1` 写入的旧值，从而将充电桩的“逻辑归属”更新为自己。
+6.  **系统自愈**: 至此，故障转移的“物理链路”和“逻辑链路”都已完全恢复。当后端平台下次需要给该桩发送指令时，会从 Redis 查询到最新的、正确的 Pod 地址，实现指令的准确投递。
 
 ## 5. 总结
 
