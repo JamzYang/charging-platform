@@ -164,3 +164,44 @@ Kubernetes 的自愈能力与我们的无状态设计相结合，实现了自动
 
 本方案利用 Kubernetes 的核心能力，构建了一个健壮、可扩展、易于维护的充电桩网关系统。通过将网关无状态化，并采用基于 Redis 和 Kafka 的目标路由方案，我们成功地将复杂的分布式系统问题分解为一系列清晰、可管理的模块，为未来业务的增长奠定了坚实的基础。
 
+
+
+---
+
+## 6. 详细技术设计与选型 (Go)
+
+本章节规定了项目实现阶段的具体技术选型、目录结构和核心接口定义，作为编码工作的核心准则。
+
+### 6.1. 推荐技术栈
+
+为确保项目的稳定性、高性能和可维护性，我们选用以下在 Go 社区中经过广泛验证的库：
+
+*   **WebSocket**: `gorilla/websocket` - Go 社区事实上的标准库，功能强大且稳定。
+*   **Kafka**: `segmentio/kafka-go` - 一个现代化的、高性能的 Kafka 客户端，API 设计简洁。
+*   **Redis**: `go-redis/redis` - 功能最全面的 Redis 客户端，支持哨兵和集群模式。
+*   **配置管理**: `spf13/viper` - 强大的配置解决方案，能从文件、环境变量等多种来源读取配置。
+*   **日志**: `rs/zerolog` - 一个零内存分配的、高性能的结构化日志库，非常适合生产环境。
+*   **HTTP 路由 (用于健康检查等)**: `gorilla/mux` - 一个强大且灵活的 HTTP 路由器，可以与 `gorilla/websocket` 很好地配合。
+
+### 6.2. 项目目录结构
+
+我们将遵循标准的 Go 项目布局，以实现关注点分离和高内聚、低耦合的目标：
+
+```
+charge-point-gateway/
+├── cmd/
+│   └── gateway/
+│       └── main.go         # 程序入口, 负责组装和启动所有服务
+├── internal/
+│   ├── config/             # 配置加载模块 (基于 Viper)
+│   ├── domain/             # 统一业务模型 (OCPP 结构体, 统一事件模型)
+│   ├── gateway/            # WebSocket 服务器, 连接管理, 读写循环
+│   ├── handler/            # OCPP 版本处理器 (Handler), 业务模型转换器 (Converter)
+│   ├── message/            # Kafka 生产者和消费者客户端
+│   └── storage/            # Redis 客户端及相关操作 (e.g., SET/GET 连接映射)
+├── pkg/                    # (可选) 未来可供外部使用的代码
+├── configs/                # 配置文件目录 (e.g., config.yaml)
+├── go.mod
+├── go.sum
+└── Dockerfile
+```
