@@ -6,6 +6,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/charging-platform/charge-point-gateway/internal/domain/events"
+	"github.com/charging-platform/charge-point-gateway/internal/metrics"
 	"github.com/rs/zerolog/log"
 )
 
@@ -52,6 +53,7 @@ func (p *KafkaProducer) PublishEvent(event events.Event) error {
 		Topic: p.topic,
 		Key:   sarama.StringEncoder(event.GetChargePointID()), // 使用充电桩ID作为Key，保证同一桩的消息落入同一分区
 		Value: sarama.ByteEncoder(eventData),
+		Metadata: event,
 	}
 
 	// 3. 发送消息
@@ -68,6 +70,9 @@ func (p *KafkaProducer) Close() error {
 
 func (p *KafkaProducer) handleSuccesses() {
 	for msg := range p.producer.Successes() {
+		if event, ok := msg.Metadata.(events.Event); ok {
+			metrics.EventsPublished.WithLabelValues(string(event.GetType())).Inc()
+		}
 		log.Debug().
 			Str("topic", msg.Topic).
 			Str("key", string(msg.Key.(sarama.StringEncoder))).

@@ -10,6 +10,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/charging-platform/charge-point-gateway/internal/domain/connection"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
+	"github.com/charging-platform/charge-point-gateway/internal/metrics"
 )
 
 // getGlobalLogger 获取全局日志器
@@ -255,6 +256,9 @@ func (m *Manager) HandleConnection(w http.ResponseWriter, r *http.Request, charg
 	m.mutex.Lock()
 	m.connections[chargePointID] = wrapper
 	m.mutex.Unlock()
+
+	// Update metrics
+	metrics.ActiveConnections.Inc()
 	
 	// 启动连接处理
 	m.wg.Add(1)
@@ -370,6 +374,9 @@ func (m *Manager) removeConnection(chargePointID string) {
 	
 	if wrapper, exists := m.connections[chargePointID]; exists {
 		delete(m.connections, chargePointID)
+
+		// Update metrics
+		metrics.ActiveConnections.Dec()
 		
 		// 发送断开连接事件
 		m.sendEvent(ConnectionEvent{

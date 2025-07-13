@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,10 +13,12 @@ import (
 	"github.com/charging-platform/charge-point-gateway/internal/gateway"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
 	"github.com/charging-platform/charge-point-gateway/internal/message"
+	"github.com/charging-platform/charge-point-gateway/internal/metrics"
 	"github.com/charging-platform/charge-point-gateway/internal/protocol/ocpp16"
 	"github.com/charging-platform/charge-point-gateway/internal/storage"
 	"github.com/charging-platform/charge-point-gateway/internal/transport/router"
 	"github.com/charging-platform/charge-point-gateway/internal/transport/websocket"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/spf13/viper"
 )
 
@@ -49,6 +52,13 @@ func main() {
 
 	logger.Info("Starting Charge Point Gateway...")
 	logger.Infof("Server will listen on %s", cfg.GetServerAddr())
+
+	// 注册监控指标
+	metrics.RegisterMetrics()
+	logger.Info("Metrics registered")
+
+	// 启动监控服务器
+	go startMetricsServer(cfg.Metrics.Addr)
 
 	// 初始化存储
 	redisStorage, err := storage.NewRedisStorage(cfg.Redis)
@@ -269,6 +279,9 @@ func setDefaultConfig() {
 	viper.SetDefault("server.port", 8080)
 	viper.SetDefault("server.websocket_path", "/ocpp")
 
+	// 监控配置
+	viper.SetDefault("metrics.addr", ":9090")
+
 	// Redis配置
 	viper.SetDefault("redis.addr", "localhost:6379")
 	viper.SetDefault("redis.password", "")
@@ -287,3 +300,13 @@ func setDefaultConfig() {
 	viper.SetDefault("log.level", "info")
 	viper.SetDefault("log.format", "console")
 }
+
+// startMetricsServer 启动监控服务器
+func startMetricsServer(addr string) {
+	logger.Infof("Starting metrics server on %s", addr)
+	http.Handle("/metrics", promhttp.Handler())
+	if err := http.ListenAndServe(addr, nil); err != nil {
+		logger.Fatalf("Failed to start metrics server: %v", err)
+	}
+}
+

@@ -8,6 +8,7 @@ import (
 
 	"github.com/charging-platform/charge-point-gateway/internal/domain/events"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
+	"github.com/charging-platform/charge-point-gateway/internal/metrics"
 )
 
 // ProtocolHandler 协议处理器接口
@@ -296,6 +297,11 @@ func (d *DefaultMessageDispatcher) DispatchMessage(ctx context.Context, chargePo
 	}
 
 	d.updateStats(protocolVersion, startTime, true)
+	// TODO: The messageType is not available at this level of abstraction.
+	// For now, we use a placeholder. This could be improved by having the
+	// protocol handler return the parsed message type.
+	metrics.MessagesReceived.WithLabelValues(protocolVersion, "unknown").Inc()
+	metrics.MessageProcessingDuration.WithLabelValues("unknown").Observe(time.Since(startTime).Seconds())
 	d.logger.Debugf("Successfully dispatched message for charge point %s using protocol %s", chargePointID, protocolVersion)
 
 	return response, nil
