@@ -42,7 +42,7 @@ func NewLRUCache(config *CacheConfig) *LRUCache {
 		stats: &CacheStats{
 			MaxSize:       int64(config.MaxSize),
 			MemoryLimitMB: int64(config.MemoryLimitMB),
-			CreatedAt:     time.Now(),
+			CreatedAt:     time.Now().Format(time.RFC3339), // 格式化时间
 		},
 		stopCh: make(chan struct{}),
 	}
@@ -74,31 +74,14 @@ func (c *LRUCache) Get(key string) (interface{}, bool) {
 	}()
 	
 	shard := c.getShard(key)
-	shard.mutex.Lock()
-	defer shard.mutex.Unlock()
-	
-	node, exists := shard.items[key]
+	value, exists := shard.Get(key)
 	if !exists {
 		atomic.AddInt64(&c.globalStats.misses, 1)
 		return nil, false
 	}
 	
-	// 检查是否过期
-	if node.Item.IsExpired() {
-		// 删除过期项
-		delete(shard.items, key)
-		shard.lruList.RemoveNode(node)
-		atomic.AddInt64(&c.globalStats.expirations, 1)
-		atomic.AddInt64(&c.globalStats.misses, 1)
-		return nil, false
-	}
-	
-	// 更新访问信息
-	node.Item.UpdateAccess()
-	shard.lruList.MoveToHead(node)
-	
 	atomic.AddInt64(&c.globalStats.hits, 1)
-	return node.Item.Value, true
+	return value, true
 }
 
 // Set 设置缓存项
@@ -111,57 +94,20 @@ func (c *LRUCache) Set(key string, value interface{}, ttl time.Duration) error {
 		}
 	}()
 	
-	if ttl == 0 {
-		ttl = c.config.DefaultTTL
-	}
-	
-	now := time.Now()
-	item := &CacheItem{
-		Key:         key,
-		Value:       value,
-		CreatedAt:   now,
-		AccessAt:    now,
-		AccessCount: 1,
-		Size:        c.estimateSize(value),
-	}
-	
-	if ttl > 0 {
-		item.ExpiresAt = now.Add(ttl)
-	}
-	
 	shard := c.getShard(key)
-	shard.mutex.Lock()
-	defer shard.mutex.Unlock()
-	
-	// 检查是否已存在
-	if existingNode, exists := shard.items[key]; exists {
-		// 更新现有项
-		existingNode.Item = item
-		shard.lruList.MoveToHead(existingNode)
-		return nil
+	err := shard.Add(key, value, ttl)
+	if err != nil {
+		return err
 	}
-	
-	// 检查当前分片容量限制
-	if len(shard.items) >= c.config.MaxSize/c.config.ShardCount {
-		// 从当前分片淘汰一个项目
-		if shard.lruList.Size() > 0 {
-			node := shard.lruList.RemoveTail()
-			if node != nil {
-				delete(shard.items, node.Key)
-				atomic.AddInt64(&c.globalStats.evictions, 1)
-			}
+
+	// 在添加新项后，检查并执行全局容量限制淘汰
+	for int64(c.Size()) > c.config.MaxSize {
+		evictedCount := c.EvictLRU(c.config.EvictionBatch)
+		if evictedCount == 0 {
+			// 如果无法淘汰更多项目，则退出循环以避免死循环
+			break
 		}
 	}
-	
-	// 创建新节点
-	node := &LRUNode{
-		Key:  key,
-		Item: item,
-	}
-	
-	shard.items[key] = node
-	shard.lruList.AddToHead(node)
-	
 	return nil
 }
 
@@ -172,18 +118,7 @@ func (c *LRUCache) Delete(key string) bool {
 	}()
 	
 	shard := c.getShard(key)
-	shard.mutex.Lock()
-	defer shard.mutex.Unlock()
-	
-	node, exists := shard.items[key]
-	if !exists {
-		return false
-	}
-	
-	delete(shard.items, key)
-	shard.lruList.RemoveNode(node)
-	
-	return true
+	return shard.Remove(key)
 }
 
 // Clear 清空所有缓存
@@ -327,13 +262,15 @@ func (c *LRUCache) GetMemoryUsage() int64 {
 func (c *LRUCache) EvictLRU(count int) int {
 	evicted := 0
 
-	for _, shard := range c.shards {
-		if evicted >= count {
-			break
-		}
+	// 计算每个分片需要淘汰的数量
+	shardEvictCount := count / len(c.shards)
+	if shardEvictCount == 0 {
+		shardEvictCount = 1 // 至少淘汰一个
+	}
 
+	for _, shard := range c.shards {
 		shard.mutex.Lock()
-		for evicted < count && shard.lruList.Size() > 0 {
+		for i := 0; i < shardEvictCount && shard.lruList.Size() > 0; i++ {
 			node := shard.lruList.RemoveTail()
 			if node != nil {
 				delete(shard.items, node.Key)
@@ -411,7 +348,7 @@ func (c *LRUCache) IsRunning() bool {
 // checkCapacityLimits 检查容量限制
 func (c *LRUCache) checkCapacityLimits(shard *CacheShard) error {
 	// 检查项目数量限制
-	if c.Size() >= c.config.MaxSize {
+	if int64(c.Size()) >= c.config.MaxSize {
 		// 淘汰一些项目
 		evicted := c.EvictLRU(c.config.EvictionBatch)
 		if evicted == 0 {
