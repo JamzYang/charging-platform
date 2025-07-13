@@ -11,7 +11,7 @@ LDFLAGS := -ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME) 
 
 # 默认目标
 .PHONY: all
-all: clean lint test build
+all: clean check test build
 
 # 清理
 .PHONY: clean
@@ -26,11 +26,27 @@ deps:
 	@go mod download
 	@go mod tidy
 
-# 代码检查
+# 快速代码检查 (开发阶段)
+.PHONY: vet
+vet:
+	@echo "Running go vet..."
+	@go vet ./...
+
+# 全面代码检查 (提交前)
 .PHONY: lint
 lint:
-	@echo "Running linter..."
-	@golangci-lint run ./...
+	@echo "Running comprehensive linter..."
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not found, running go vet instead..."; \
+		go vet ./...; \
+	fi
+
+# 基础检查 (快速)
+.PHONY: check
+check: vet fmt
+	@echo "Basic checks completed"
 
 # 格式化代码
 .PHONY: fmt

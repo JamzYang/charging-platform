@@ -43,12 +43,12 @@ type RedisConfig struct {
 
 // KafkaConfig Kafka配置
 type KafkaConfig struct {
-	Brokers           []string      `mapstructure:"brokers"`
-	UpstreamTopic     string        `mapstructure:"upstream_topic"`
-	DownstreamTopic   string        `mapstructure:"downstream_topic"`
-	ConsumerGroup     string        `mapstructure:"consumer_group"`
-	Producer          ProducerConfig `mapstructure:"producer"`
-	Consumer          ConsumerConfig `mapstructure:"consumer"`
+	Brokers         []string       `mapstructure:"brokers"`
+	UpstreamTopic   string         `mapstructure:"upstream_topic"`
+	DownstreamTopic string         `mapstructure:"downstream_topic"`
+	ConsumerGroup   string         `mapstructure:"consumer_group"`
+	Producer        ProducerConfig `mapstructure:"producer"`
+	Consumer        ConsumerConfig `mapstructure:"consumer"`
 }
 
 // ProducerConfig Kafka生产者配置
@@ -60,8 +60,8 @@ type ProducerConfig struct {
 
 // ConsumerConfig Kafka消费者配置
 type ConsumerConfig struct {
-	ReturnErrors    bool   `mapstructure:"return_errors"`
-	OffsetsInitial  string `mapstructure:"offsets_initial"`
+	ReturnErrors   bool   `mapstructure:"return_errors"`
+	OffsetsInitial string `mapstructure:"offsets_initial"`
 }
 
 // CacheConfig 缓存配置
@@ -88,10 +88,10 @@ type MonitoringConfig struct {
 
 // OCPPConfig OCPP协议配置
 type OCPPConfig struct {
-	SupportedVersions   []string      `mapstructure:"supported_versions"`
-	HeartbeatInterval   time.Duration `mapstructure:"heartbeat_interval"`
-	ConnectionTimeout   time.Duration `mapstructure:"connection_timeout"`
-	MessageTimeout      time.Duration `mapstructure:"message_timeout"`
+	SupportedVersions []string      `mapstructure:"supported_versions"`
+	HeartbeatInterval time.Duration `mapstructure:"heartbeat_interval"`
+	ConnectionTimeout time.Duration `mapstructure:"connection_timeout"`
+	MessageTimeout    time.Duration `mapstructure:"message_timeout"`
 }
 
 // SecurityConfig 安全配置
