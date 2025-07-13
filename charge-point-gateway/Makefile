@@ -61,6 +61,35 @@ test:
 	@echo "Running tests..."
 	@go test -v -race -coverprofile=coverage.out ./...
 
+# 运行集成测试
+.PHONY: test-integration
+test-integration:
+	@echo "Running integration tests..."
+	@go test -v -race -tags=integration ./test/integration/...
+
+# 运行端到端测试
+.PHONY: test-e2e
+test-e2e:
+	@echo "Running E2E tests..."
+	@go test -v -race -tags=e2e ./test/e2e/...
+
+# 运行所有测试（单元测试 + 集成测试 + E2E测试）
+.PHONY: test-all
+test-all: test test-integration test-e2e
+
+# 运行性能测试
+.PHONY: test-performance
+test-performance:
+	@echo "Running performance tests..."
+	@go test -v -race -tags=performance ./test/e2e/performance/...
+
+# 运行测试并生成详细报告
+.PHONY: test-report
+test-report:
+	@echo "Running tests with detailed report..."
+	@go test -v -race -coverprofile=coverage.out -json ./... > test-results.json
+	@go tool cover -html=coverage.out -o coverage.html
+
 # 测试覆盖率
 .PHONY: coverage
 coverage: test

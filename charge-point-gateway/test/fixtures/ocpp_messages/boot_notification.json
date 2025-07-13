@@ -1,0 +1,10 @@
+{
+  "chargePointVendor": "TestVendor",
+  "chargePointModel": "TestModel",
+  "chargePointSerialNumber": "SN123456",
+  "firmwareVersion": "1.0.0",
+  "iccid": "89860000000000000000",
+  "imsi": "123456789012345",
+  "meterType": "TestMeter",
+  "meterSerialNumber": "MSN123456"
+}

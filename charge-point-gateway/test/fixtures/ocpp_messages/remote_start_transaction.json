@@ -1,0 +1,24 @@
+{
+  "idTag": "RFID123456",
+  "connectorId": 1,
+  "chargingProfile": {
+    "chargingProfileId": 1,
+    "stackLevel": 0,
+    "chargingProfilePurpose": "TxProfile",
+    "chargingProfileKind": "Absolute",
+    "validFrom": "2024-01-14T10:00:00Z",
+    "validTo": "2024-01-14T12:00:00Z",
+    "chargingSchedule": {
+      "duration": 7200,
+      "startSchedule": "2024-01-14T10:00:00Z",
+      "chargingRateUnit": "W",
+      "chargingSchedulePeriod": [
+        {
+          "startPeriod": 0,
+          "limit": 7200,
+          "numberPhases": 1
+        }
+      ]
+    }
+  }
+}

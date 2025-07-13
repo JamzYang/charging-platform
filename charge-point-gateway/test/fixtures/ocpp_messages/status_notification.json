@@ -1,0 +1,9 @@
+{
+  "connectorId": 1,
+  "errorCode": "NoError",
+  "status": "Preparing",
+  "timestamp": "2024-01-14T10:00:00Z",
+  "info": "Connector preparing for charging",
+  "vendorId": "TestVendor",
+  "vendorErrorCode": ""
+}
