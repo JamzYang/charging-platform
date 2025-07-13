@@ -217,7 +217,7 @@ sequenceDiagram
 为确保项目的稳定性、高性能和可维护性，我们选用以下在 Go 社区中经过广泛验证的库：
 
 *   **WebSocket**: `gorilla/websocket` - Go 社区事实上的标准库，功能强大且稳定。
-*   **Kafka**: `segmentio/kafka-go` - 一个现代化的、高性能的 Kafka 客户端，API 设计简洁。
+*   **Kafka**: `Shopify/sarama生态较小` - 一个现代化的、高性能的 Kafka 客户端。
 *   **Redis**: `go-redis/redis` - 功能最全面的 Redis 客户端，支持哨兵和集群模式。
 *   **配置管理**: `spf13/viper` - 强大的配置解决方案，能从文件、环境变量等多种来源读取配置。
 *   **日志**: `rs/zerolog` - 一个零内存分配的、高性能的结构化日志库，非常适合生产环境。
