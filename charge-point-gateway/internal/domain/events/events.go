@@ -113,6 +113,21 @@ func (e *ChargePointDisconnectedEvent) ToJSON() ([]byte, error) {
 	return json.Marshal(e)
 }
 
+// ChargePointHeartbeatEvent 充电桩心跳事件
+type ChargePointHeartbeatEvent struct {
+	*BaseEvent
+}
+
+// GetPayload 实现Event接口
+func (e *ChargePointHeartbeatEvent) GetPayload() interface{} {
+	return nil
+}
+
+// ToJSON 实现Event接口
+func (e *ChargePointHeartbeatEvent) ToJSON() ([]byte, error) {
+	return json.Marshal(e)
+}
+
 // ChargePointRegisteredEvent 充电桩注册事件
 type ChargePointRegisteredEvent struct {
 	*BaseEvent

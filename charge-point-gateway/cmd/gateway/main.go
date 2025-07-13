@@ -11,7 +11,9 @@ import (
 	"github.com/charging-platform/charge-point-gateway/internal/config"
 	"github.com/charging-platform/charge-point-gateway/internal/gateway"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
+	"github.com/charging-platform/charge-point-gateway/internal/message"
 	"github.com/charging-platform/charge-point-gateway/internal/protocol/ocpp16"
+	"github.com/charging-platform/charge-point-gateway/internal/storage"
 	"github.com/charging-platform/charge-point-gateway/internal/transport/router"
 	"github.com/charging-platform/charge-point-gateway/internal/transport/websocket"
 	"github.com/spf13/viper"
@@ -48,43 +50,72 @@ func main() {
 	logger.Info("Starting Charge Point Gateway...")
 	logger.Infof("Server will listen on %s", cfg.GetServerAddr())
 
-	// 创建上下文
-	_, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// 初始化存储
+	redisStorage, err := storage.NewRedisStorage(cfg.Redis)
+	if err != nil {
+		logger.Fatalf("Failed to initialize Redis storage: %v", err)
+	}
+
+	// 初始化 Kafka 生产者
+	kafkaProducer, err := message.NewKafkaProducer(cfg.Kafka.Brokers, cfg.Kafka.UpstreamTopic)
+	if err != nil {
+		logger.Fatalf("Failed to initialize Kafka producer: %v", err)
+	}
+
+	// 初始化 Kafka 消费者
+	kafkaConsumer, err := message.NewKafkaConsumer(cfg.Kafka.Brokers, cfg.Kafka.DownstreamTopic, cfg.PodID, cfg.Kafka.PartitionNum)
+	if err != nil {
+		logger.Fatalf("Failed to initialize Kafka consumer: %v", err)
+	}
 
 	// 初始化网关组件
-	gateway, err := initializeGateway(cfg)
+	gateway, err := initializeGateway(cfg, redisStorage, kafkaProducer)
 	if err != nil {
 		logger.Errorf("Failed to initialize gateway: %v", err)
 		os.Exit(1)
 	}
 
-	// 启动网关
+	// 定义下行指令处理器
+	commandHandler := func(cmd *message.Command) {
+		logger.Infof("Received command for charge point %s: %s", cmd.ChargePointID, cmd.CommandName)
+		// 使用 wsManager 找到对应的连接，并发送指令
+		// gateway.wsManager.SendCommand(cmd.ChargePointID, cmd)
+	}
+
+	// 启动服务
+	go kafkaConsumer.Start(commandHandler)
 	if err := gateway.Start(); err != nil {
 		logger.Errorf("Failed to start gateway: %v", err)
 		os.Exit(1)
 	}
-	defer gateway.Stop()
 
 	logger.Info("Gateway started successfully")
 
 	// 等待中断信号
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	logger.Info("Shutting down server...")
 
-	<-sigChan
-	logger.Info("Received shutdown signal, gracefully shutting down...")
-
-	// 优雅关闭
-	_, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-
-	// 关闭网关组件
-	if err := gateway.Stop(); err != nil {
-		logger.Errorf("Error during gateway shutdown: %v", err)
+	// 执行清理操作
+	// 1. 关闭 WebSocket 服务器
+	if err := gateway.wsManager.Stop(); err != nil {
+		logger.Errorf("Error stopping WebSocket manager: %v", err)
+	}
+	// 2. 关闭 Kafka 消费者
+	if err := kafkaConsumer.Close(); err != nil {
+		logger.Errorf("Error closing Kafka consumer: %v", err)
+	}
+	// 3. 关闭 Kafka 生产者
+	if err := kafkaProducer.Close(); err != nil {
+		logger.Errorf("Error closing Kafka producer: %v", err)
+	}
+	// 4. 关闭 Redis 连接
+	if err := redisStorage.Close(); err != nil {
+		logger.Errorf("Error closing Redis storage: %v", err)
 	}
 
-	logger.Info("Gateway shutdown completed")
+	logger.Info("Server gracefully stopped.")
 }
 
 // GatewayComponents 网关组件集合
@@ -142,7 +173,7 @@ func (g *GatewayComponents) Stop() error {
 }
 
 // initializeGateway 初始化网关组件
-func initializeGateway(cfg *config.Config) (*GatewayComponents, error) {
+func initializeGateway(cfg *config.Config, storage storage.ConnectionStorage, producer message.EventProducer) (*GatewayComponents, error) {
 	logger.Info("Initializing gateway components...")
 
 	// 1. 创建统一模型转换器
@@ -155,7 +186,7 @@ func initializeGateway(cfg *config.Config) (*GatewayComponents, error) {
 
 	// 3. 创建OCPP16处理器
 	processorConfig := ocpp16.DefaultProcessorConfig()
-	processor := ocpp16.NewProcessor(processorConfig)
+	processor := ocpp16.NewProcessor(processorConfig, cfg.PodID, storage)
 
 	// 4. 创建OCPP16协议处理器适配器
 	handlerConfig := ocpp16.DefaultProtocolHandlerConfig()

@@ -12,6 +12,7 @@ import (
 	"github.com/charging-platform/charge-point-gateway/internal/domain/serialization"
 	"github.com/charging-platform/charge-point-gateway/internal/domain/validation"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
+	"github.com/charging-platform/charge-point-gateway/internal/storage"
 )
 
 // Processor OCPP 1.6消息处理器
@@ -38,6 +39,10 @@ type Processor struct {
 	
 	// 日志器
 	logger *logger.Logger
+
+	// 故障转移相关
+	podID   string
+	storage storage.ConnectionStorage // 引入 storage 接口
 }
 
 // ProcessorConfig 处理器配置
@@ -110,7 +115,7 @@ type ProcessorRequest struct {
 }
 
 // NewProcessor 创建新的OCPP消息处理器
-func NewProcessor(config *ProcessorConfig) *Processor {
+func NewProcessor(config *ProcessorConfig, podID string, storage storage.ConnectionStorage) *Processor {
 	if config == nil {
 		config = DefaultProcessorConfig()
 	}
@@ -130,6 +135,8 @@ func NewProcessor(config *ProcessorConfig) *Processor {
 		ctx:             ctx,
 		cancel:          cancel,
 		logger:          l,
+		podID:           podID,
+		storage:         storage,
 	}
 }
 
@@ -388,6 +395,13 @@ func (p *Processor) handleAction(chargePointID, action string, payload interface
 // handleBootNotification 处理BootNotification
 func (p *Processor) handleBootNotification(chargePointID string, req *ocpp16.BootNotificationRequest) (*ocpp16.BootNotificationResponse, error) {
 	p.logger.Infof("BootNotification from %s: %s %s", chargePointID, req.ChargePointVendor, req.ChargePointModel)
+
+	// 【关键步骤】: 更新 Redis 连接映射
+	err := p.storage.SetConnection(context.Background(), chargePointID, p.podID, 5*time.Minute)
+	if err != nil {
+		// 记录严重错误，但这不应中断 BootNotification 的正常响应
+		p.logger.Errorf("Failed to set connection mapping in Redis for charge point %s: %v", chargePointID, err)
+	}
 
 	// 创建响应
 	response := &ocpp16.BootNotificationResponse{

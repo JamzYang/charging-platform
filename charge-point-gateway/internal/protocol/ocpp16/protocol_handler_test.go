@@ -7,7 +7,6 @@ import (
 
 	"github.com/charging-platform/charge-point-gateway/internal/domain/events"
 	"github.com/charging-platform/charge-point-gateway/internal/domain/ocpp16"
-	"github.com/charging-platform/charge-point-gateway/internal/gateway"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,10 +62,8 @@ func (m *MockModelConverter) ConvertBootNotification(chargePointID string, req *
 
 func (m *MockModelConverter) ConvertHeartbeat(chargePointID string, req *ocpp16.HeartbeatRequest) (events.Event, error) {
 	// 心跳事件可以使用基础事件
-	return &events.BaseEvent{
-		Type:          events.EventTypeChargePointHeartbeat,
-		ChargePointID: chargePointID,
-		Timestamp:     time.Now(),
+	return &events.ChargePointHeartbeatEvent{
+		BaseEvent: events.NewBaseEvent(events.EventTypeChargePointHeartbeat, chargePointID, events.EventSeverityInfo, events.Metadata{}),
 	}, nil
 }
 
@@ -111,7 +108,7 @@ func (m *MockModelConverter) ConvertStartTransaction(chargePointID string, req *
 			ChargePointID: chargePointID,
 		},
 		AuthorizationInfo: events.AuthorizationInfo{
-			IDTag: req.IDTag,
+			IdTag: req.IdTag,
 		},
 	}, nil
 }
@@ -124,20 +121,15 @@ func (m *MockModelConverter) ConvertStopTransaction(chargePointID string, req *o
 			Timestamp:     time.Now(),
 		},
 		TransactionInfo: events.TransactionInfo{
-			ID:            req.TransactionID,
+			ID:            req.TransactionId,
 			ChargePointID: chargePointID,
 			StopReason:    stringPtr("Local"),
 		},
 	}, nil
 }
 
-// stringPtr 辅助函数，返回字符串指针
-func stringPtr(s string) *string {
-	return &s
-}
-
 func TestNewProtocolHandler(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	
 	handler := NewProtocolHandler(processor, converter, nil)
@@ -160,7 +152,7 @@ func TestNewProtocolHandlerWithNilProcessor(t *testing.T) {
 }
 
 func TestProtocolHandler_GetVersion(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	
@@ -169,7 +161,7 @@ func TestProtocolHandler_GetVersion(t *testing.T) {
 }
 
 func TestProtocolHandler_GetSupportedActions(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	
@@ -195,7 +187,7 @@ func TestProtocolHandler_GetSupportedActions(t *testing.T) {
 }
 
 func TestProtocolHandler_StartStop(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	
@@ -220,7 +212,7 @@ func TestProtocolHandler_StartStop(t *testing.T) {
 }
 
 func TestProtocolHandler_ProcessMessage(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	
@@ -245,7 +237,7 @@ func TestProtocolHandler_ProcessMessage(t *testing.T) {
 }
 
 func TestProtocolHandler_ProcessMessage_InvalidMessage(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	
@@ -265,7 +257,7 @@ func TestProtocolHandler_ProcessMessage_InvalidMessage(t *testing.T) {
 }
 
 func TestProtocolHandler_GetEventChannel(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	
@@ -282,7 +274,7 @@ func TestProtocolHandler_GetEventChannel(t *testing.T) {
 }
 
 func TestProtocolHandler_GetStats(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	
@@ -297,7 +289,7 @@ func TestProtocolHandler_GetStats(t *testing.T) {
 }
 
 func TestProtocolHandler_IsHealthy(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	
@@ -313,7 +305,7 @@ func TestProtocolHandler_IsHealthy(t *testing.T) {
 }
 
 func TestProtocolHandler_EventForwarding(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	
 	// 使用较小的事件通道进行测试
@@ -356,7 +348,7 @@ func TestDefaultProtocolHandlerConfig(t *testing.T) {
 }
 
 func TestProtocolHandler_ConvertEvent(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
 	

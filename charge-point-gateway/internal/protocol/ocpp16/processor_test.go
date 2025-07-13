@@ -1,6 +1,7 @@
 package ocpp16
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -10,6 +11,52 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mockConnectionStorage is a mock implementation of the ConnectionStorage interface for testing.
+type mockConnectionStorage struct {
+	SetConnectionFunc    func(ctx context.Context, chargePointID string, gatewayID string, ttl time.Duration) error
+	GetConnectionFunc    func(ctx context.Context, chargePointID string) (string, error)
+	DeleteConnectionFunc func(ctx context.Context, chargePointID string) error
+	CloseFunc            func() error
+
+	// Fields to track calls
+	setConnectionCalled    bool
+	setConnectionChargePointID string
+	setConnectionGatewayID     string
+	setConnectionTTL           time.Duration
+}
+
+func (m *mockConnectionStorage) SetConnection(ctx context.Context, chargePointID string, gatewayID string, ttl time.Duration) error {
+	m.setConnectionCalled = true
+	m.setConnectionChargePointID = chargePointID
+	m.setConnectionGatewayID = gatewayID
+	m.setConnectionTTL = ttl
+	if m.SetConnectionFunc != nil {
+		return m.SetConnectionFunc(ctx, chargePointID, gatewayID, ttl)
+	}
+	return nil
+}
+
+func (m *mockConnectionStorage) GetConnection(ctx context.Context, chargePointID string) (string, error) {
+	if m.GetConnectionFunc != nil {
+		return m.GetConnectionFunc(ctx, chargePointID)
+	}
+	return "", nil
+}
+
+func (m *mockConnectionStorage) DeleteConnection(ctx context.Context, chargePointID string) error {
+	if m.DeleteConnectionFunc != nil {
+		return m.DeleteConnectionFunc(ctx, chargePointID)
+	}
+	return nil
+}
+
+func (m *mockConnectionStorage) Close() error {
+	if m.CloseFunc != nil {
+		return m.CloseFunc()
+	}
+	return nil
+}
 
 func TestDefaultProcessorConfig(t *testing.T) {
 	config := DefaultProcessorConfig()
@@ -29,7 +76,8 @@ func TestDefaultProcessorConfig(t *testing.T) {
 
 func TestNewProcessor(t *testing.T) {
 	config := DefaultProcessorConfig()
-	processor := NewProcessor(config)
+	mockStorage := &mockConnectionStorage{}
+	processor := NewProcessor(config, "pod-1", mockStorage)
 	
 	assert.NotNil(t, processor)
 	assert.Equal(t, config, processor.config)
@@ -39,10 +87,12 @@ func TestNewProcessor(t *testing.T) {
 	assert.NotNil(t, processor.eventChan)
 	assert.NotNil(t, processor.pendingRequests)
 	assert.NotNil(t, processor.logger)
+	assert.Equal(t, "pod-1", processor.podID)
+	assert.Equal(t, mockStorage, processor.storage)
 }
 
 func TestNewProcessorWithNilConfig(t *testing.T) {
-	processor := NewProcessor(nil)
+	processor := NewProcessor(nil, "pod-1", &mockConnectionStorage{})
 	
 	assert.NotNil(t, processor)
 	assert.NotNil(t, processor.config)
@@ -50,7 +100,7 @@ func TestNewProcessorWithNilConfig(t *testing.T) {
 }
 
 func TestProcessor_StartStop(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	
 	// 测试启动
 	err := processor.Start()
@@ -65,7 +115,8 @@ func TestProcessor_StartStop(t *testing.T) {
 }
 
 func TestProcessor_ProcessMessage_BootNotification(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	mockStorage := &mockConnectionStorage{}
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", mockStorage)
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -99,8 +150,29 @@ func TestProcessor_ProcessMessage_BootNotification(t *testing.T) {
 	assert.Equal(t, 300, bootResponse.Interval)
 }
 
+func TestProcessor_handleBootNotification_SetConnection(t *testing.T) {
+	// Setup
+	mockStorage := &mockConnectionStorage{}
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-123", mockStorage)
+	chargePointID := "CP001"
+	request := &ocpp16.BootNotificationRequest{
+		ChargePointVendor: "TestVendor",
+		ChargePointModel:  "TestModel",
+	}
+
+	// Execute
+	_, err := processor.handleBootNotification(chargePointID, request)
+	require.NoError(t, err)
+
+	// Assert
+	assert.True(t, mockStorage.setConnectionCalled, "SetConnection should have been called")
+	assert.Equal(t, chargePointID, mockStorage.setConnectionChargePointID)
+	assert.Equal(t, "pod-123", mockStorage.setConnectionGatewayID)
+	assert.Equal(t, 5*time.Minute, mockStorage.setConnectionTTL)
+}
+
 func TestProcessor_ProcessMessage_Heartbeat(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -126,7 +198,7 @@ func TestProcessor_ProcessMessage_Heartbeat(t *testing.T) {
 }
 
 func TestProcessor_ProcessMessage_StatusNotification(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -155,7 +227,7 @@ func TestProcessor_ProcessMessage_StatusNotification(t *testing.T) {
 }
 
 func TestProcessor_ProcessMessage_Authorize(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -183,7 +255,7 @@ func TestProcessor_ProcessMessage_Authorize(t *testing.T) {
 }
 
 func TestProcessor_ProcessMessage_StartTransaction(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -215,7 +287,7 @@ func TestProcessor_ProcessMessage_StartTransaction(t *testing.T) {
 }
 
 func TestProcessor_ProcessMessage_InvalidJSON(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -230,7 +302,7 @@ func TestProcessor_ProcessMessage_InvalidJSON(t *testing.T) {
 }
 
 func TestProcessor_ProcessMessage_InvalidMessageType(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -245,7 +317,7 @@ func TestProcessor_ProcessMessage_InvalidMessageType(t *testing.T) {
 }
 
 func TestProcessor_ProcessMessage_UnsupportedAction(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -263,7 +335,7 @@ func TestProcessor_ProcessMessage_MessageSizeValidation(t *testing.T) {
 	config := DefaultProcessorConfig()
 	config.MaxMessageSize = 10 // 设置很小的限制
 	
-	processor := NewProcessor(config)
+	processor := NewProcessor(config, "pod-1", &mockConnectionStorage{})
 	err := processor.Start()
 	require.NoError(t, err)
 	defer processor.Stop()
@@ -278,7 +350,7 @@ func TestProcessor_ProcessMessage_MessageSizeValidation(t *testing.T) {
 }
 
 func TestProcessor_GetEventChannel(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	
 	eventChan := processor.GetEventChannel()
 	assert.NotNil(t, eventChan)
@@ -288,7 +360,7 @@ func TestProcessor_GetEventChannel(t *testing.T) {
 }
 
 func TestProcessor_GetPendingRequestCount(t *testing.T) {
-	processor := NewProcessor(DefaultProcessorConfig())
+	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	
 	// 初始应该为0
 	assert.Equal(t, 0, processor.GetPendingRequestCount())
