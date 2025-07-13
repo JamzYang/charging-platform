@@ -9,11 +9,13 @@ import (
 
 // Config 应用程序配置结构
 type Config struct {
+	PodID      string           `mapstructure:"pod_id"`
 	Server     ServerConfig     `mapstructure:"server"`
 	Redis      RedisConfig      `mapstructure:"redis"`
 	Kafka      KafkaConfig      `mapstructure:"kafka"`
 	Cache      CacheConfig      `mapstructure:"cache"`
 	Log        LogConfig        `mapstructure:"log"`
+	Metrics    MetricsConfig    `mapstructure:"metrics"`
 	Monitoring MonitoringConfig `mapstructure:"monitoring"`
 	OCPP       OCPPConfig       `mapstructure:"ocpp"`
 	Security   SecurityConfig   `mapstructure:"security"`
@@ -47,6 +49,7 @@ type KafkaConfig struct {
 	UpstreamTopic   string         `mapstructure:"upstream_topic"`
 	DownstreamTopic string         `mapstructure:"downstream_topic"`
 	ConsumerGroup   string         `mapstructure:"consumer_group"`
+	PartitionNum    int            `mapstructure:"partition_num"`
 	Producer        ProducerConfig `mapstructure:"producer"`
 	Consumer        ConsumerConfig `mapstructure:"consumer"`
 }
@@ -79,9 +82,13 @@ type LogConfig struct {
 	Output string `mapstructure:"output"`
 }
 
+// MetricsConfig 监控指标配置
+type MetricsConfig struct {
+	Addr string `mapstructure:"addr"`
+}
+
 // MonitoringConfig 监控配置
 type MonitoringConfig struct {
-	MetricsPort     int  `mapstructure:"metrics_port"`
 	HealthCheckPort int  `mapstructure:"health_check_port"`
 	PprofEnabled    bool `mapstructure:"pprof_enabled"`
 }
@@ -118,7 +125,7 @@ func (c *Config) GetServerAddr() string {
 
 // GetMetricsAddr 获取监控地址
 func (c *Config) GetMetricsAddr() string {
-	return fmt.Sprintf(":%d", c.Monitoring.MetricsPort)
+	return c.Metrics.Addr
 }
 
 // GetHealthCheckAddr 获取健康检查地址
