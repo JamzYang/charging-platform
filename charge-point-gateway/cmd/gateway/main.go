@@ -8,21 +8,41 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	"github.com/charging-platform/charge-point-gateway/internal/config"
+	"github.com/charging-platform/charge-point-gateway/internal/logger"
 	"github.com/spf13/viper"
 )
 
 func main() {
-	// 初始化日志
-	initLogger()
-
-	// 加载配置
+	// 初始化配置
 	if err := initConfig(); err != nil {
-		log.Fatal().Err(err).Msg("Failed to initialize configuration")
+		fmt.Printf("Failed to initialize configuration: %v\n", err)
+		os.Exit(1)
 	}
 
-	log.Info().Msg("Starting Charge Point Gateway...")
+	// 加载应用配置
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Failed to load configuration: %v\n", err)
+		os.Exit(1)
+	}
+
+	// 初始化日志系统
+	logConfig := &logger.Config{
+		Level:      cfg.Log.Level,
+		Format:     cfg.Log.Format,
+		Output:     cfg.Log.Output,
+		TimeFormat: time.RFC3339,
+		Caller:     true,
+	}
+
+	if err := logger.InitGlobalLogger(logConfig); err != nil {
+		fmt.Printf("Failed to initialize logger: %v\n", err)
+		os.Exit(1)
+	}
+
+	logger.Info("Starting Charge Point Gateway...")
+	logger.Infof("Server will listen on %s", cfg.GetServerAddr())
 
 	// 创建上下文
 	ctx, cancel := context.WithCancel(context.Background())
@@ -40,7 +60,7 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	<-sigChan
-	log.Info().Msg("Received shutdown signal, gracefully shutting down...")
+	logger.Info("Received shutdown signal, gracefully shutting down...")
 
 	// 优雅关闭
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -49,17 +69,10 @@ func main() {
 	// TODO: 关闭各个组件
 	_ = shutdownCtx
 
-	log.Info().Msg("Gateway shutdown completed")
+	logger.Info("Gateway shutdown completed")
 }
 
-func initLogger() {
-	// 配置结构化日志
-	zerolog.TimeFieldFormat = time.RFC3339
-	log.Logger = log.Output(zerolog.ConsoleWriter{Out: os.Stdout})
-
-	// 设置日志级别
-	zerolog.SetGlobalLevel(zerolog.InfoLevel)
-}
+// initLogger 函数已被移除，现在使用 logger 包进行日志初始化
 
 func initConfig() error {
 	// 设置配置文件名和路径
@@ -78,13 +91,13 @@ func initConfig() error {
 	// 读取配置文件
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			log.Warn().Msg("Config file not found, using defaults and environment variables")
+			fmt.Println("Config file not found, using defaults and environment variables")
 		} else {
 			return fmt.Errorf("error reading config file: %w", err)
 		}
+	} else {
+		fmt.Printf("Configuration loaded from: %s\n", viper.ConfigFileUsed())
 	}
-
-	log.Info().Str("config_file", viper.ConfigFileUsed()).Msg("Configuration loaded")
 	return nil
 }
 
