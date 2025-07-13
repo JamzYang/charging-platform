@@ -233,16 +233,22 @@ charge-point-gateway/
 │   └── gateway/
 │       └── main.go         # 程序入口, 负责组装和启动所有服务
 ├── internal/
-│   ├── config/             # 配置加载模块 (基于 Viper)
 │   ├── domain/             # 统一业务模型 (OCPP 结构体, 统一事件模型)
 │   ├── gateway/            # WebSocket 服务器, 连接管理, 读写循环
 │   ├── handler/            # OCPP 版本处理器 (Handler), 业务模型转换器 (Converter)
 │   ├── message/            # Kafka 生产者和消费者客户端
 │   └── storage/            # Redis 客户端及相关操作 (e.g., SET/GET 连接映射)
 ├── pkg/                    # (可选) 未来可供外部使用的代码
-├── configs/                # 配置文件目录 (e.g., config.yaml)
+├── api/                        # API定义和文档
+│   ├── openapi.yaml           # HTTP API规范
+│   └── kafka-schemas/         # Kafka消息Schema
+├── configs/                    # 配置文件
+├── deployments/               # 部署配置
+│   ├── k8s/                   # Kubernetes配置
+│   └── docker-compose.yml     # 本地开发环境
+├── scripts/                   # 构建和部署脚本
+├── docs/                      # 网关专用文档
 ├── go.mod
-├── go.sum
 └── Dockerfile
 ```
 
