@@ -36,11 +36,11 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 
 	// 步骤1: 远程启动 - 后端发送RemoteStartTransaction
 	t.Log("Step 1: Remote start transaction")
-	
+
 	remoteStartCommand := map[string]interface{}{
-		"charge_point_id": chargePointID,
-		"command_name":    "RemoteStartTransaction",
-		"message_id":      "remote-start-session-001",
+		"chargePointId": chargePointID,
+		"commandName":   "RemoteStartTransaction",
+		"messageId":     "remote-start-session-001",
 		"payload": map[string]interface{}{
 			"idTag":       "RFID123456",
 			"connectorId": 1,
@@ -48,42 +48,38 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 		"timestamp": time.Now().Format(time.RFC3339),
 	}
 
+	// 等待一小段时间，确保Kafka消费者组已经准备就绪
+	time.Sleep(2 * time.Second)
 	err = sendCommandToKafka(env, remoteStartCommand)
 	require.NoError(t, err)
 
 	// 验证充电桩收到RemoteStartTransaction请求
 	var remoteStartMessageID string
 	utils.AssertEventuallyTrue(t, func() bool {
-		select {
-		case response, err := wsClient.ReceiveMessage(100 * time.Millisecond):
-			if err != nil {
-				return false
-			}
-			
-			messageID, payload := utils.AssertRemoteStartTransactionRequest(t, response)
-			remoteStartMessageID = messageID
-			
-			// 验证载荷
-			assert.Equal(t, "RFID123456", payload["idTag"])
-			assert.Equal(t, float64(1), payload["connectorId"])
-			
-			return true
-		default:
+		response, err := utils.ReceiveMessageWithTimeout(wsClient, 100*time.Millisecond)
+		if err != nil {
 			return false
 		}
+		messageID, payload := utils.AssertRemoteStartTransactionRequest(t, response)
+		remoteStartMessageID = messageID
+
+		// 验证载荷
+		assert.Equal(t, "RFID123456", payload["idTag"])
+		assert.Equal(t, float64(1), payload["connectorId"])
+		return true
 	}, 10*time.Second, "Should receive RemoteStartTransaction request")
 
 	// 步骤2: 启动确认 - 桩回复RemoteStartTransaction.conf并发送StatusNotification (Charging)
 	t.Log("Step 2: Start confirmation")
-	
+
 	// 发送RemoteStartTransaction响应
 	remoteStartResponse := map[string]interface{}{
 		"status": "Accepted",
 	}
-	
+
 	responseMessage, err := utils.CreateOCPPMessage(3, remoteStartMessageID, "", remoteStartResponse)
 	require.NoError(t, err)
-	
+
 	err = wsClient.SendMessage(responseMessage)
 	require.NoError(t, err)
 
@@ -121,7 +117,7 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 
 	// 步骤3: 上报计量 - 桩定时发送MeterValues
 	t.Log("Step 3: Meter values reporting")
-	
+
 	// 模拟多次计量数据上报
 	for i := 0; i < 3; i++ {
 		meterPayload := map[string]interface{}{
@@ -174,62 +170,57 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 
 	// 步骤4: 远程停止 - 后端发送RemoteStopTransaction
 	t.Log("Step 4: Remote stop transaction")
-	
+
 	remoteStopCommand := map[string]interface{}{
-		"charge_point_id": chargePointID,
-		"command_name":    "RemoteStopTransaction",
-		"message_id":      "remote-stop-session-001",
+		"chargePointId": chargePointID,
+		"commandName":   "RemoteStopTransaction",
+		"messageId":     "remote-stop-session-001",
 		"payload": map[string]interface{}{
 			"transactionId": 12345,
 		},
 		"timestamp": time.Now().Format(time.RFC3339),
 	}
 
+	// 同样，等待一小段时间
+	time.Sleep(1 * time.Second)
 	err = sendCommandToKafka(env, remoteStopCommand)
 	require.NoError(t, err)
 
 	// 验证充电桩收到RemoteStopTransaction请求
 	var remoteStopMessageID string
 	utils.AssertEventuallyTrue(t, func() bool {
-		select {
-		case response, err := wsClient.ReceiveMessage(100 * time.Millisecond):
-			if err != nil {
-				return false
-			}
-			
-			var message []interface{}
-			err = json.Unmarshal(response, &message)
-			if err != nil || len(message) < 4 {
-				return false
-			}
-			
-			messageType := int(message[0].(float64))
-			action := message[2].(string)
-			
-			if messageType == 2 && action == "RemoteStopTransaction" {
-				remoteStopMessageID = message[1].(string)
-				payload := message[3].(map[string]interface{})
-				assert.Equal(t, float64(12345), payload["transactionId"])
-				return true
-			}
-			
-			return false
-		default:
+		response, err := utils.ReceiveMessageWithTimeout(wsClient, 100*time.Millisecond)
+		if err != nil {
 			return false
 		}
+		var message []interface{}
+		err = json.Unmarshal(response, &message)
+		if err != nil || len(message) < 4 {
+			return false
+		}
+		messageType := int(message[0].(float64))
+		action := message[2].(string)
+
+		if messageType == 2 && action == "RemoteStopTransaction" {
+			remoteStopMessageID = message[1].(string)
+			payload := message[3].(map[string]interface{})
+			assert.Equal(t, float64(12345), payload["transactionId"])
+			return true
+		}
+		return false
 	}, 10*time.Second, "Should receive RemoteStopTransaction request")
 
 	// 步骤5: 停止确认 - 桩回复RemoteStopTransaction.conf并发送StatusNotification (Finishing)
 	t.Log("Step 5: Stop confirmation")
-	
+
 	// 发送RemoteStopTransaction响应
 	remoteStopResponse := map[string]interface{}{
 		"status": "Accepted",
 	}
-	
+
 	stopResponseMessage, err := utils.CreateOCPPMessage(3, remoteStopMessageID, "", remoteStopResponse)
 	require.NoError(t, err)
-	
+
 	err = wsClient.SendMessage(stopResponseMessage)
 	require.NoError(t, err)
 
@@ -255,7 +246,7 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 
 	// 步骤6: 交易数据 - 桩发送StopTransaction
 	t.Log("Step 6: Transaction data")
-	
+
 	stopTransactionPayload := map[string]interface{}{
 		"transactionId": 12345,
 		"timestamp":     time.Now().Format(time.RFC3339),
@@ -285,7 +276,7 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 	// 验证StopTransaction响应
 	stopTransactionResponse, err := wsClient.ReceiveMessage(5 * time.Second)
 	require.NoError(t, err)
-	
+
 	responsePayload := utils.AssertOCPPCallResult(t, stopTransactionResponse, stopTransactionMessageID)
 	// StopTransaction响应可能包含idTagInfo
 	if idTagInfo, exists := responsePayload["idTagInfo"]; exists {
@@ -315,7 +306,7 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 
 	// 验证完整流程中的所有Kafka事件
 	t.Log("Verifying complete event flow...")
-	
+
 	// 等待所有事件处理完成
 	time.Sleep(2 * time.Second)
 
@@ -370,6 +361,6 @@ func performBootNotification(t *testing.T, wsClient *utils.WebSocketClient, char
 
 	utils.AssertBootNotificationResponse(t, response, messageID)
 	time.Sleep(100 * time.Millisecond)
-	
+
 	return nil
 }

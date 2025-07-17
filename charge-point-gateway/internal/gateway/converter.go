@@ -8,6 +8,7 @@ import (
 
 	"github.com/charging-platform/charge-point-gateway/internal/domain/events"
 	"github.com/charging-platform/charge-point-gateway/internal/domain/ocpp16"
+	"github.com/charging-platform/charge-point-gateway/internal/domain/protocol"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
 )
 
@@ -15,10 +16,10 @@ import (
 type ModelConverter interface {
 	// ConvertToUnifiedEvent 将OCPP消息转换为统一业务事件
 	ConvertToUnifiedEvent(ctx context.Context, chargePointID string, action string, payload interface{}) (events.Event, error)
-	
+
 	// ConvertBootNotification 转换BootNotification消息
 	ConvertBootNotification(chargePointID string, req *ocpp16.BootNotificationRequest) (*events.ChargePointConnectedEvent, error)
-	
+
 	// ConvertHeartbeat 转换Heartbeat消息
 	ConvertHeartbeat(chargePointID string, req *ocpp16.HeartbeatRequest) (events.Event, error)
 
@@ -27,13 +28,13 @@ type ModelConverter interface {
 
 	// ConvertMeterValues 转换MeterValues消息
 	ConvertMeterValues(chargePointID string, req *ocpp16.MeterValuesRequest) (*events.MeterValuesReceivedEvent, error)
-	
+
 	// ConvertStartTransaction 转换StartTransaction消息
 	ConvertStartTransaction(chargePointID string, req *ocpp16.StartTransactionRequest) (*events.TransactionStartedEvent, error)
-	
+
 	// ConvertStopTransaction 转换StopTransaction消息
 	ConvertStopTransaction(chargePointID string, req *ocpp16.StopTransactionRequest) (*events.TransactionStoppedEvent, error)
-	
+
 	// GetSupportedActions 获取支持的转换动作列表
 	GetSupportedActions() []string
 }
@@ -42,10 +43,10 @@ type ModelConverter interface {
 type UnifiedModelConverter struct {
 	// 事件工厂
 	eventFactory *events.EventFactory
-	
+
 	// 转换规则配置
 	config *ConverterConfig
-	
+
 	// 日志器
 	logger *logger.Logger
 }
@@ -54,13 +55,13 @@ type UnifiedModelConverter struct {
 type ConverterConfig struct {
 	// 是否启用严格模式（严格验证字段）
 	StrictMode bool `json:"strict_mode"`
-	
+
 	// 默认超时时间
 	DefaultTimeout time.Duration `json:"default_timeout"`
-	
+
 	// 是否启用字段映射日志
 	EnableFieldMapping bool `json:"enable_field_mapping"`
-	
+
 	// 支持的OCPP版本
 	SupportedVersions []string `json:"supported_versions"`
 }
@@ -71,7 +72,7 @@ func DefaultConverterConfig() *ConverterConfig {
 		StrictMode:         false,
 		DefaultTimeout:     30 * time.Second,
 		EnableFieldMapping: false,
-		SupportedVersions:  []string{"1.6"},
+		SupportedVersions:  []string{protocol.OCPP_VERSION_1_6},
 	}
 }
 
@@ -80,10 +81,10 @@ func NewUnifiedModelConverter(config *ConverterConfig) *UnifiedModelConverter {
 	if config == nil {
 		config = DefaultConverterConfig()
 	}
-	
+
 	// 创建日志器
 	l, _ := logger.New(logger.DefaultConfig())
-	
+
 	return &UnifiedModelConverter{
 		eventFactory: events.NewEventFactory(),
 		config:       config,
@@ -94,44 +95,44 @@ func NewUnifiedModelConverter(config *ConverterConfig) *UnifiedModelConverter {
 // ConvertToUnifiedEvent 将OCPP消息转换为统一业务事件
 func (c *UnifiedModelConverter) ConvertToUnifiedEvent(ctx context.Context, chargePointID string, action string, payload interface{}) (events.Event, error) {
 	c.logger.Debugf("Converting OCPP action %s to unified event for charge point %s", action, chargePointID)
-	
+
 	switch action {
 	case "BootNotification":
 		if req, ok := payload.(*ocpp16.BootNotificationRequest); ok {
 			return c.ConvertBootNotification(chargePointID, req)
 		}
 		return nil, fmt.Errorf("invalid payload type for BootNotification: %T", payload)
-		
+
 	case "Heartbeat":
 		if req, ok := payload.(*ocpp16.HeartbeatRequest); ok {
 			return c.ConvertHeartbeat(chargePointID, req)
 		}
 		return nil, fmt.Errorf("invalid payload type for Heartbeat: %T", payload)
-		
+
 	case "StatusNotification":
 		if req, ok := payload.(*ocpp16.StatusNotificationRequest); ok {
 			return c.ConvertStatusNotification(chargePointID, req)
 		}
 		return nil, fmt.Errorf("invalid payload type for StatusNotification: %T", payload)
-		
+
 	case "MeterValues":
 		if req, ok := payload.(*ocpp16.MeterValuesRequest); ok {
 			return c.ConvertMeterValues(chargePointID, req)
 		}
 		return nil, fmt.Errorf("invalid payload type for MeterValues: %T", payload)
-		
+
 	case "StartTransaction":
 		if req, ok := payload.(*ocpp16.StartTransactionRequest); ok {
 			return c.ConvertStartTransaction(chargePointID, req)
 		}
 		return nil, fmt.Errorf("invalid payload type for StartTransaction: %T", payload)
-		
+
 	case "StopTransaction":
 		if req, ok := payload.(*ocpp16.StopTransactionRequest); ok {
 			return c.ConvertStopTransaction(chargePointID, req)
 		}
 		return nil, fmt.Errorf("invalid payload type for StopTransaction: %T", payload)
-		
+
 	default:
 		return nil, fmt.Errorf("unsupported OCPP action: %s", action)
 	}
@@ -153,13 +154,13 @@ func (c *UnifiedModelConverter) ConvertBootNotification(chargePointID string, re
 		SerialNumber:    req.ChargePointSerialNumber,
 		FirmwareVersion: req.FirmwareVersion,
 		LastSeen:        time.Now(),
-		ProtocolVersion: "1.6",
+		ProtocolVersion: protocol.OCPP_VERSION_1_6,
 	}
 
 	// 创建元数据
 	metadata := events.Metadata{
 		Source:          "gateway",
-		ProtocolVersion: "1.6",
+		ProtocolVersion: protocol.OCPP_VERSION_1_6,
 	}
 
 	// 创建连接事件
@@ -196,7 +197,7 @@ func (c *UnifiedModelConverter) ConvertHeartbeat(chargePointID string, req *ocpp
 	// 创建元数据
 	metadata := events.Metadata{
 		Source:          "gateway",
-		ProtocolVersion: "1.6",
+		ProtocolVersion: protocol.OCPP_VERSION_1_6,
 	}
 
 	// 创建心跳事件
@@ -243,18 +244,18 @@ func (c *UnifiedModelConverter) ConvertStatusNotification(chargePointID string, 
 	// 创建连接器信息
 	errorCodeStr := string(req.ErrorCode)
 	connectorInfo := events.ConnectorInfo{
-		ID:              req.ConnectorId,
-		ChargePointID:   chargePointID,
-		Status:          connectorStatus,
-		ErrorCode:       &errorCodeStr,
+		ID:               req.ConnectorId,
+		ChargePointID:    chargePointID,
+		Status:           connectorStatus,
+		ErrorCode:        &errorCodeStr,
 		ErrorDescription: req.Info,
-		VendorErrorCode: req.VendorErrorCode,
+		VendorErrorCode:  req.VendorErrorCode,
 	}
 
 	// 创建元数据
 	metadata := events.Metadata{
 		Source:          "gateway",
-		ProtocolVersion: "1.6",
+		ProtocolVersion: protocol.OCPP_VERSION_1_6,
 	}
 
 	// 创建连接器状态变化事件
@@ -337,7 +338,7 @@ func (c *UnifiedModelConverter) ConvertMeterValues(chargePointID string, req *oc
 	// 创建元数据
 	metadata := events.Metadata{
 		Source:          "gateway",
-		ProtocolVersion: "1.6",
+		ProtocolVersion: protocol.OCPP_VERSION_1_6,
 	}
 
 	// 创建电表数据事件
@@ -379,7 +380,7 @@ func (c *UnifiedModelConverter) ConvertStartTransaction(chargePointID string, re
 	// 创建元数据
 	metadata := events.Metadata{
 		Source:          "gateway",
-		ProtocolVersion: "1.6",
+		ProtocolVersion: protocol.OCPP_VERSION_1_6,
 	}
 
 	// 创建交易开始事件
@@ -513,7 +514,7 @@ func (c *UnifiedModelConverter) ConvertStopTransaction(chargePointID string, req
 	// 创建元数据
 	metadata := events.Metadata{
 		Source:          "gateway",
-		ProtocolVersion: "1.6",
+		ProtocolVersion: protocol.OCPP_VERSION_1_6,
 	}
 
 	// 创建交易停止事件

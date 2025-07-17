@@ -33,7 +33,7 @@ func TestTC_INT_04_RemoteStartTransaction(t *testing.T) {
 	// 步骤1: 后端模拟器查询Redis，获取CP-001所在的Pod ID
 	ctx := context.Background()
 	connectionKey := fmt.Sprintf("conn:%s", chargePointID)
-	
+
 	// 验证连接映射存在
 	utils.AssertEventuallyTrue(t, func() bool {
 		result, err := env.RedisClient.Get(ctx, connectionKey).Result()
@@ -41,7 +41,7 @@ func TestTC_INT_04_RemoteStartTransaction(t *testing.T) {
 	}, 5*time.Second, "Connection mapping should exist in Redis")
 
 	// 步骤2: 后端模拟器计算分区，并向commands-down主题的对应分区发送RemoteStartTransaction指令
-	
+
 	// 加载RemoteStartTransaction测试数据
 	remoteStartData, err := utils.LoadTestData("ocpp_messages/remote_start_transaction.json")
 	require.NoError(t, err)
@@ -78,35 +78,31 @@ func TestTC_INT_04_RemoteStartTransaction(t *testing.T) {
 
 	// 步骤3: 验证模拟充电桩CP-001收到RemoteStartTransaction请求
 	utils.AssertEventuallyTrue(t, func() bool {
-		select {
-		case response, err := wsClient.ReceiveMessage(100 * time.Millisecond):
-			if err != nil {
-				return false
-			}
-			
-			// 验证收到的是RemoteStartTransaction请求
-			messageID, payload := utils.AssertRemoteStartTransactionRequest(t, response)
-			
-			// 验证载荷内容
-			require.Contains(t, payload, "idTag", "Payload should contain idTag")
-			idTag := payload["idTag"].(string)
-			require.Equal(t, "RFID123456", idTag, "IdTag should match")
-			
-			// 发送响应
-			responsePayload := map[string]interface{}{
-				"status": "Accepted",
-			}
-			
-			responseMessage, err := utils.CreateOCPPMessage(3, messageID, "", responsePayload)
-			require.NoError(t, err)
-			
-			err = wsClient.SendMessage(responseMessage)
-			require.NoError(t, err)
-			
-			return true
-		default:
+		response, err := wsClient.ReceiveMessage(100 * time.Millisecond)
+		if err != nil {
 			return false
 		}
+
+		// 验证收到的是RemoteStartTransaction请求
+		messageID, payload := utils.AssertRemoteStartTransactionRequest(t, response)
+
+		// 验证载荷内容
+		require.Contains(t, payload, "idTag", "Payload should contain idTag")
+		idTag := payload["idTag"].(string)
+		require.Equal(t, "RFID123456", idTag, "IdTag should match")
+
+		// 发送响应
+		responsePayload := map[string]interface{}{
+			"status": "Accepted",
+		}
+
+		responseMessage, err := utils.CreateOCPPMessage(3, messageID, "", responsePayload)
+		require.NoError(t, err)
+
+		err = wsClient.SendMessage(responseMessage)
+		require.NoError(t, err)
+
+		return true
 	}, 10*time.Second, "Should receive RemoteStartTransaction request")
 
 	t.Log("TC-INT-04 RemoteStartTransaction test passed")
@@ -162,17 +158,17 @@ func TestTC_INT_04_RemoteStartTransaction_MultipleCommands(t *testing.T) {
 	// 创建多个充电桩连接
 	chargePointCount := 5
 	wsClients := make([]*utils.WebSocketClient, chargePointCount)
-	
+
 	// 建立连接并完成BootNotification
 	for i := 0; i < chargePointCount; i++ {
 		chargePointID := fmt.Sprintf("CP-%03d", i+1)
-		
+
 		wsClient, err := utils.NewWebSocketClient(env.GatewayURL, chargePointID)
 		require.NoError(t, err)
 		defer wsClient.Close()
-		
+
 		wsClients[i] = wsClient
-		
+
 		// 完成BootNotification
 		err = performBootNotification(t, wsClient, chargePointID)
 		require.NoError(t, err)
@@ -181,7 +177,7 @@ func TestTC_INT_04_RemoteStartTransaction_MultipleCommands(t *testing.T) {
 	// 并发发送RemoteStartTransaction指令
 	for i := 0; i < chargePointCount; i++ {
 		chargePointID := fmt.Sprintf("CP-%03d", i+1)
-		
+
 		command := map[string]interface{}{
 			"charge_point_id": chargePointID,
 			"command_name":    "RemoteStartTransaction",
@@ -211,34 +207,30 @@ func TestTC_INT_04_RemoteStartTransaction_MultipleCommands(t *testing.T) {
 	successCount := 0
 	for i := 0; i < chargePointCount; i++ {
 		wsClient := wsClients[i]
-		
+
 		// 等待接收指令
 		utils.AssertEventuallyTrue(t, func() bool {
-			select {
-			case response, err := wsClient.ReceiveMessage(100 * time.Millisecond):
-				if err != nil {
-					return false
-				}
-				
-				// 验证收到RemoteStartTransaction请求
-				messageID, _ := utils.AssertRemoteStartTransactionRequest(t, response)
-				
-				// 发送响应
-				responsePayload := map[string]interface{}{
-					"status": "Accepted",
-				}
-				
-				responseMessage, err := utils.CreateOCPPMessage(3, messageID, "", responsePayload)
-				require.NoError(t, err)
-				
-				err = wsClient.SendMessage(responseMessage)
-				require.NoError(t, err)
-				
-				successCount++
-				return true
-			default:
+			response, err := wsClient.ReceiveMessage(100 * time.Millisecond)
+			if err != nil {
 				return false
 			}
+
+			// 验证收到RemoteStartTransaction请求
+			messageID, _ := utils.AssertRemoteStartTransactionRequest(t, response)
+
+			// 发送响应
+			responsePayload := map[string]interface{}{
+				"status": "Accepted",
+			}
+
+			responseMessage, err := utils.CreateOCPPMessage(3, messageID, "", responsePayload)
+			require.NoError(t, err)
+
+			err = wsClient.SendMessage(responseMessage)
+			require.NoError(t, err)
+
+			successCount++
+			return true
 		}, 10*time.Second, fmt.Sprintf("Charge point %d should receive command", i+1))
 	}
 
@@ -281,9 +273,9 @@ func performBootNotification(t *testing.T, wsClient *utils.WebSocketClient, char
 
 	// 验证响应
 	utils.AssertBootNotificationResponse(t, response, messageID)
-	
+
 	// 等待一小段时间确保连接状态稳定
 	time.Sleep(100 * time.Millisecond)
-	
+
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/charging-platform/charge-point-gateway/internal/domain/events"
+	"github.com/charging-platform/charge-point-gateway/internal/domain/protocol"
 	"github.com/charging-platform/charge-point-gateway/internal/gateway"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
 )
@@ -16,22 +17,22 @@ type ProtocolHandler struct {
 	// 核心组件
 	processor *Processor
 	converter gateway.ModelConverter
-	
+
 	// 配置
 	config *ProtocolHandlerConfig
-	
+
 	// 事件系统
 	eventChan chan events.Event
-	
+
 	// 生命周期管理
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-	
+
 	// 状态管理
 	started    bool
 	startMutex sync.Mutex
-	
+
 	// 日志器
 	logger *logger.Logger
 }
@@ -39,15 +40,15 @@ type ProtocolHandler struct {
 // ProtocolHandlerConfig 协议处理器配置
 type ProtocolHandlerConfig struct {
 	// 事件配置
-	EventChannelSize int `json:"event_channel_size"`
+	EventChannelSize int  `json:"event_channel_size"`
 	EnableEvents     bool `json:"enable_events"`
-	
+
 	// 转换配置
 	EnableConversion bool `json:"enable_conversion"`
-	
+
 	// 性能配置
 	EventBufferSize int `json:"event_buffer_size"`
-	
+
 	// 日志配置
 	LogLevel string `json:"log_level"`
 }
@@ -68,16 +69,16 @@ func NewProtocolHandler(processor *Processor, converter gateway.ModelConverter, 
 	if config == nil {
 		config = DefaultProtocolHandlerConfig()
 	}
-	
+
 	if processor == nil {
 		panic("processor cannot be nil")
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// 创建日志器
 	l, _ := logger.New(logger.DefaultConfig())
-	
+
 	return &ProtocolHandler{
 		processor: processor,
 		converter: converter,
@@ -92,16 +93,16 @@ func NewProtocolHandler(processor *Processor, converter gateway.ModelConverter, 
 // ProcessMessage 处理协议消息
 func (h *ProtocolHandler) ProcessMessage(ctx context.Context, chargePointID string, message []byte) (interface{}, error) {
 	h.logger.Debugf("Processing OCPP 1.6 message from %s", chargePointID)
-	
+
 	// 使用现有的处理器处理消息
 	response, err := h.processor.ProcessMessage(chargePointID, message)
 	if err != nil {
 		h.logger.Errorf("Failed to process OCPP message from %s: %v", chargePointID, err)
 		return nil, fmt.Errorf("OCPP message processing failed: %w", err)
 	}
-	
+
 	h.logger.Debugf("Successfully processed OCPP 1.6 message from %s", chargePointID)
-	
+
 	return response, nil
 }
 
@@ -118,7 +119,7 @@ func (h *ProtocolHandler) GetSupportedActions() []string {
 		"StopTransaction",
 		"Authorize",
 		"DataTransfer",
-		
+
 		// Core Profile - Central System Initiated
 		"ChangeAvailability",
 		"ChangeConfiguration",
@@ -128,21 +129,21 @@ func (h *ProtocolHandler) GetSupportedActions() []string {
 		"RemoteStopTransaction",
 		"Reset",
 		"UnlockConnector",
-		
+
 		// Firmware Management Profile
 		"GetDiagnostics",
 		"UpdateFirmware",
 		"FirmwareStatusNotification",
 		"DiagnosticsStatusNotification",
-		
+
 		// Local Auth List Management Profile
 		"GetLocalListVersion",
 		"SendLocalList",
-		
+
 		// Reservation Profile
 		"ReserveNow",
 		"CancelReservation",
-		
+
 		// Smart Charging Profile
 		"SetChargingProfile",
 		"ClearChargingProfile",
@@ -153,35 +154,35 @@ func (h *ProtocolHandler) GetSupportedActions() []string {
 
 // GetVersion 获取协议版本
 func (h *ProtocolHandler) GetVersion() string {
-	return "1.6"
+	return protocol.OCPP_VERSION_1_6
 }
 
 // Start 启动处理器
 func (h *ProtocolHandler) Start() error {
 	h.startMutex.Lock()
 	defer h.startMutex.Unlock()
-	
+
 	if h.started {
 		return fmt.Errorf("protocol handler already started")
 	}
-	
+
 	h.logger.Info("Starting OCPP 1.6 protocol handler")
-	
+
 	// 启动底层处理器
 	if err := h.processor.Start(); err != nil {
 		return fmt.Errorf("failed to start OCPP processor: %w", err)
 	}
-	
+
 	// 启动事件转发协程
 	if h.config.EnableEvents {
 		h.wg.Add(1)
 		go h.eventForwardingRoutine()
 	}
-	
+
 	h.started = true
-	
+
 	h.logger.Info("OCPP 1.6 protocol handler started successfully")
-	
+
 	return nil
 }
 
@@ -189,31 +190,31 @@ func (h *ProtocolHandler) Start() error {
 func (h *ProtocolHandler) Stop() error {
 	h.startMutex.Lock()
 	defer h.startMutex.Unlock()
-	
+
 	if !h.started {
 		return nil
 	}
-	
+
 	h.logger.Info("Stopping OCPP 1.6 protocol handler")
-	
+
 	// 取消上下文
 	h.cancel()
-	
+
 	// 停止底层处理器
 	if err := h.processor.Stop(); err != nil {
 		h.logger.Errorf("Error stopping OCPP processor: %v", err)
 	}
-	
+
 	// 等待所有协程结束
 	h.wg.Wait()
-	
+
 	// 关闭事件通道
 	close(h.eventChan)
-	
+
 	h.started = false
-	
+
 	h.logger.Info("OCPP 1.6 protocol handler stopped")
-	
+
 	return nil
 }
 
@@ -225,24 +226,24 @@ func (h *ProtocolHandler) GetEventChannel() <-chan events.Event {
 // eventForwardingRoutine 事件转发协程
 func (h *ProtocolHandler) eventForwardingRoutine() {
 	defer h.wg.Done()
-	
+
 	// 获取处理器的事件通道
 	processorEventChan := h.processor.GetEventChannel()
-	
+
 	h.logger.Debug("Event forwarding routine started")
-	
+
 	for {
 		select {
 		case <-h.ctx.Done():
 			h.logger.Debug("Event forwarding routine stopping")
 			return
-			
+
 		case event, ok := <-processorEventChan:
 			if !ok {
 				h.logger.Debug("Processor event channel closed")
 				return
 			}
-			
+
 			h.forwardEvent(event)
 		}
 	}
@@ -260,7 +261,7 @@ func (h *ProtocolHandler) forwardEvent(event events.Event) {
 			event = convertedEvent
 		}
 	}
-	
+
 	// 转发事件到统一通道
 	select {
 	case h.eventChan <- event:
@@ -277,7 +278,7 @@ func (h *ProtocolHandler) convertEvent(event events.Event) (events.Event, error)
 	// 这里可以使用转换器进行事件转换
 	// 目前简化实现，直接返回原始事件
 	// 在实际实现中，可以根据事件类型调用相应的转换方法
-	
+
 	switch event.GetType() {
 	case events.EventTypeChargePointConnected:
 		// 可以调用converter.ConvertBootNotification等方法
@@ -297,18 +298,18 @@ func (h *ProtocolHandler) convertEvent(event events.Event) (events.Event, error)
 // GetStats 获取处理器统计信息
 func (h *ProtocolHandler) GetStats() map[string]interface{} {
 	stats := map[string]interface{}{
-		"version":           h.GetVersion(),
-		"started":           h.started,
-		"supported_actions": len(h.GetSupportedActions()),
+		"version":            h.GetVersion(),
+		"started":            h.started,
+		"supported_actions":  len(h.GetSupportedActions()),
 		"event_channel_size": cap(h.eventChan),
 		"event_channel_len":  len(h.eventChan),
 	}
-	
+
 	// 添加底层处理器的统计信息
 	if h.processor != nil {
 		stats["pending_requests"] = h.processor.GetPendingRequestCount()
 	}
-	
+
 	return stats
 }
 
@@ -317,11 +318,11 @@ func (h *ProtocolHandler) IsHealthy() bool {
 	if !h.started {
 		return false
 	}
-	
+
 	// 检查事件通道是否阻塞
 	if len(h.eventChan) >= cap(h.eventChan)*9/10 { // 90%满认为不健康
 		return false
 	}
-	
+
 	return true
 }

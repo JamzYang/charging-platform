@@ -211,8 +211,8 @@ func (s *CacheShard) Add(key string, value interface{}, ttl time.Duration) error
 
 // Get 获取缓存项
 func (s *CacheShard) Get(key string) (interface{}, bool) {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
 
 	node, exists := s.items[key]
 	if !exists {
@@ -220,12 +220,8 @@ func (s *CacheShard) Get(key string) (interface{}, bool) {
 	}
 
 	if node.Item.IsExpired() {
-		s.mutex.RUnlock() // 临时释放读锁以便获取写锁
-		s.mutex.Lock()
 		delete(s.items, key)
 		s.lruList.RemoveNode(node)
-		s.mutex.Unlock()
-		s.mutex.RLock() // 重新获取读锁
 		return nil, false
 	}
 

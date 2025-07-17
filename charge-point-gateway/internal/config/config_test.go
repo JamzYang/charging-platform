@@ -116,7 +116,7 @@ func TestConfig_GetServerAddr(t *testing.T) {
 func TestConfig_GetMetricsAddr(t *testing.T) {
 	cfg := &Config{
 		Monitoring: MonitoringConfig{
-			MetricsPort: 9090,
+			MetricsAddr: ":9090",
 		},
 	}
 

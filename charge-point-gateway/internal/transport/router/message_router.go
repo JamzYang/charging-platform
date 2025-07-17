@@ -17,30 +17,30 @@ type DefaultMessageRouter struct {
 	// 核心组件
 	dispatcher gateway.MessageDispatcher
 	wsManager  *websocket.Manager
-	
+
 	// 配置
 	config *RouterConfig
-	
+
 	// 连接管理
 	connections map[string]*ConnectionInfo
 	connMutex   sync.RWMutex
-	
+
 	// 事件系统
 	eventChan chan events.Event
-	
+
 	// 统计信息
 	stats      RouterStats
 	statsMutex sync.RWMutex
-	
+
 	// 生命周期管理
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-	
+
 	// 状态管理
 	started    bool
 	startMutex sync.Mutex
-	
+
 	// 日志器
 	logger *logger.Logger
 }
@@ -50,12 +50,12 @@ func NewDefaultMessageRouter(config *RouterConfig) *DefaultMessageRouter {
 	if config == nil {
 		config = DefaultRouterConfig()
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// 创建日志器
 	l, _ := logger.New(logger.DefaultConfig())
-	
+
 	return &DefaultMessageRouter{
 		config:      config,
 		connections: make(map[string]*ConnectionInfo),
@@ -79,10 +79,10 @@ func (r *DefaultMessageRouter) SetMessageDispatcher(dispatcher gateway.MessageDi
 			Timestamp: time.Now(),
 		}
 	}
-	
+
 	r.dispatcher = dispatcher
 	r.logger.Info("Message dispatcher set successfully")
-	
+
 	return nil
 }
 
@@ -95,10 +95,10 @@ func (r *DefaultMessageRouter) SetWebSocketManager(manager *websocket.Manager) e
 			Timestamp: time.Now(),
 		}
 	}
-	
+
 	r.wsManager = manager
 	r.logger.Info("WebSocket manager set successfully")
-	
+
 	return nil
 }
 
@@ -106,7 +106,7 @@ func (r *DefaultMessageRouter) SetWebSocketManager(manager *websocket.Manager) e
 func (r *DefaultMessageRouter) Start() error {
 	r.startMutex.Lock()
 	defer r.startMutex.Unlock()
-	
+
 	if r.started {
 		return &RouterError{
 			Code:      "ALREADY_STARTED",
@@ -114,7 +114,7 @@ func (r *DefaultMessageRouter) Start() error {
 			Timestamp: time.Now(),
 		}
 	}
-	
+
 	// 检查必要组件
 	if r.dispatcher == nil {
 		return &RouterError{
@@ -123,7 +123,7 @@ func (r *DefaultMessageRouter) Start() error {
 			Timestamp: time.Now(),
 		}
 	}
-	
+
 	if r.wsManager == nil {
 		return &RouterError{
 			Code:      ErrCodeWebSocketManagerNotSet,
@@ -131,50 +131,50 @@ func (r *DefaultMessageRouter) Start() error {
 			Timestamp: time.Now(),
 		}
 	}
-	
+
 	r.logger.Info("Starting message router")
-	
+
 	// 启动WebSocket管理器
 	if err := r.wsManager.Start(); err != nil {
 		return fmt.Errorf("failed to start WebSocket manager: %w", err)
 	}
-	
+
 	// 启动消息分发器
 	if err := r.dispatcher.Start(); err != nil {
 		return fmt.Errorf("failed to start message dispatcher: %w", err)
 	}
-	
+
 	// 启动消息处理协程
 	r.wg.Add(1)
 	go r.messageRoutine()
-	
+
 	// 启动事件处理协程
 	if r.config.EnableEvents {
 		r.wg.Add(1)
 		go r.eventRoutine()
 	}
-	
+
 	// 启动统计协程
 	if r.config.EnableMetrics {
 		r.wg.Add(1)
 		go r.statsRoutine()
 	}
-	
+
 	// 启动连接清理协程
 	r.wg.Add(1)
 	go r.connectionCleanupRoutine()
-	
+
 	// 启动工作协程
 	for i := 0; i < r.config.WorkerCount; i++ {
 		r.wg.Add(1)
 		go r.workerRoutine(i)
 	}
-	
+
 	r.started = true
 	r.stats.StartTime = time.Now()
-	
+
 	r.logger.Infof("Message router started with %d workers", r.config.WorkerCount)
-	
+
 	return nil
 }
 
@@ -182,49 +182,49 @@ func (r *DefaultMessageRouter) Start() error {
 func (r *DefaultMessageRouter) Stop() error {
 	r.startMutex.Lock()
 	defer r.startMutex.Unlock()
-	
+
 	if !r.started {
 		return nil
 	}
-	
+
 	r.logger.Info("Stopping message router")
-	
+
 	// 取消上下文
 	r.cancel()
-	
+
 	// 停止组件
 	if r.dispatcher != nil {
 		if err := r.dispatcher.Stop(); err != nil {
 			r.logger.Errorf("Error stopping message dispatcher: %v", err)
 		}
 	}
-	
+
 	if r.wsManager != nil {
 		if err := r.wsManager.Stop(); err != nil {
 			r.logger.Errorf("Error stopping WebSocket manager: %v", err)
 		}
 	}
-	
+
 	// 等待所有协程结束
 	r.wg.Wait()
-	
+
 	// 关闭事件通道
 	close(r.eventChan)
-	
+
 	r.started = false
-	
+
 	r.logger.Info("Message router stopped")
-	
+
 	return nil
 }
 
 // RouteMessage 路由消息到分发器
 func (r *DefaultMessageRouter) RouteMessage(ctx context.Context, chargePointID string, message []byte) error {
 	startTime := time.Now()
-	
+
 	// 更新统计信息
 	r.incrementReceivedMessages()
-	
+
 	// 检查分发器
 	if r.dispatcher == nil {
 		r.incrementFailedMessages()
@@ -237,48 +237,48 @@ func (r *DefaultMessageRouter) RouteMessage(ctx context.Context, chargePointID s
 			},
 		}
 	}
-	
+
 	// 创建带超时的上下文
 	routeCtx, cancel := context.WithTimeout(ctx, r.config.MessageTimeout)
 	defer cancel()
-	
+
 	// 记录消息日志
 	if r.config.EnableMessageLogging {
 		r.logger.Debugf("Routing message from %s: %s", chargePointID, string(message))
 	}
-	
+
 	// 分发消息（不指定协议版本，让分发器自动识别）
 	response, err := r.dispatcher.DispatchMessage(routeCtx, chargePointID, "", message)
-	
+
 	processingTime := time.Since(startTime)
 	r.updateProcessingTime(processingTime)
-	
+
 	if err != nil {
 		r.incrementFailedMessages()
 		r.logger.Errorf("Failed to route message from %s: %v", chargePointID, err)
-		
+
 		return &RouterError{
 			Code:      ErrCodeRoutingFailed,
 			Message:   fmt.Sprintf("failed to route message: %v", err),
 			Timestamp: time.Now(),
 			Context: map[string]interface{}{
-				"charge_point_id":  chargePointID,
-				"processing_time":  processingTime,
+				"charge_point_id": chargePointID,
+				"processing_time": processingTime,
 			},
 		}
 	}
-	
+
 	r.incrementRoutedMessages()
-	
+
 	// 如果有响应，发送回充电桩
 	if response != nil {
 		if err := r.sendResponse(chargePointID, response); err != nil {
 			r.logger.Errorf("Failed to send response to %s: %v", chargePointID, err)
 		}
 	}
-	
+
 	r.logger.Debugf("Successfully routed message from %s in %v", chargePointID, processingTime)
-	
+
 	return nil
 }
 
@@ -286,7 +286,7 @@ func (r *DefaultMessageRouter) RouteMessage(ctx context.Context, chargePointID s
 func (r *DefaultMessageRouter) RegisterConnection(chargePointID string, conn *websocket.ConnectionWrapper) error {
 	r.connMutex.Lock()
 	defer r.connMutex.Unlock()
-	
+
 	// 检查连接限制
 	if len(r.connections) >= r.config.MaxConnections {
 		r.incrementRejectedConnections()
@@ -295,13 +295,13 @@ func (r *DefaultMessageRouter) RegisterConnection(chargePointID string, conn *we
 			Message:   "maximum connection limit exceeded",
 			Timestamp: time.Now(),
 			Context: map[string]interface{}{
-				"charge_point_id":   chargePointID,
+				"charge_point_id":     chargePointID,
 				"current_connections": len(r.connections),
-				"max_connections":   r.config.MaxConnections,
+				"max_connections":     r.config.MaxConnections,
 			},
 		}
 	}
-	
+
 	// 创建连接信息
 	connInfo := &ConnectionInfo{
 		ChargePointID:    chargePointID,
@@ -313,7 +313,7 @@ func (r *DefaultMessageRouter) RegisterConnection(chargePointID string, conn *we
 		Status:           "connected",
 		IsHealthy:        true,
 	}
-	
+
 	// 如果连接已存在，更新信息
 	if existing, exists := r.connections[chargePointID]; exists {
 		r.logger.Warnf("Connection %s already exists, updating", chargePointID)
@@ -321,12 +321,12 @@ func (r *DefaultMessageRouter) RegisterConnection(chargePointID string, conn *we
 		connInfo.MessagesSent = existing.MessagesSent
 		connInfo.ErrorCount = existing.ErrorCount
 	}
-	
+
 	r.connections[chargePointID] = connInfo
 	r.incrementAcceptedConnections()
-	
+
 	r.logger.Infof("Connection registered: %s", chargePointID)
-	
+
 	return nil
 }
 
@@ -334,7 +334,7 @@ func (r *DefaultMessageRouter) RegisterConnection(chargePointID string, conn *we
 func (r *DefaultMessageRouter) UnregisterConnection(chargePointID string) error {
 	r.connMutex.Lock()
 	defer r.connMutex.Unlock()
-	
+
 	if _, exists := r.connections[chargePointID]; !exists {
 		return &RouterError{
 			Code:      ErrCodeConnectionNotFound,
@@ -345,9 +345,9 @@ func (r *DefaultMessageRouter) UnregisterConnection(chargePointID string) error 
 			},
 		}
 	}
-	
+
 	delete(r.connections, chargePointID)
-	
+
 	r.logger.Infof("Connection unregistered: %s", chargePointID)
 
 	return nil
@@ -472,20 +472,20 @@ func (r *DefaultMessageRouter) GetHealthStatus() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"status":              status,
-		"timestamp":           time.Now(),
-		"uptime_seconds":      stats.Uptime.Seconds(),
-		"active_connections":  stats.ActiveConnections,
-		"messages_received":   stats.MessagesReceived,
-		"messages_routed":     stats.MessagesRouted,
-		"messages_failed":     stats.MessagesFailed,
-		"events_forwarded":    stats.EventsForwarded,
-		"error_rate_percent":  errorRate,
+		"status":                  status,
+		"timestamp":               time.Now(),
+		"uptime_seconds":          stats.Uptime.Seconds(),
+		"active_connections":      stats.ActiveConnections,
+		"messages_received":       stats.MessagesReceived,
+		"messages_routed":         stats.MessagesRouted,
+		"messages_failed":         stats.MessagesFailed,
+		"events_forwarded":        stats.EventsForwarded,
+		"error_rate_percent":      errorRate,
 		"message_rate_per_second": messageRate,
-		"average_route_time_ms": stats.AverageRouteTime,
-		"max_route_time_ms":   stats.MaxRouteTime,
-		"dispatcher_set":      r.dispatcher != nil,
-		"websocket_manager_set": r.wsManager != nil,
+		"average_route_time_ms":   stats.AverageRouteTime,
+		"max_route_time_ms":       stats.MaxRouteTime,
+		"dispatcher_set":          r.dispatcher != nil,
+		"websocket_manager_set":   r.wsManager != nil,
 	}
 }
 
@@ -531,9 +531,11 @@ func (r *DefaultMessageRouter) handleWebSocketEvent(wsEvent websocket.Connection
 		}
 
 	case websocket.EventTypeMessage:
-		// 注意：当前WebSocket事件没有消息数据字段
-		// 这需要在WebSocket管理器中添加消息数据支持
+		// 处理接收到的消息
 		r.logger.Debugf("Message event received from %s", wsEvent.ChargePointID)
+		if len(wsEvent.Message) > 0 {
+			r.handleMessage(wsEvent.ChargePointID, wsEvent.Message)
+		}
 
 	case websocket.EventTypeError:
 		r.logger.Errorf("WebSocket error for %s: %v", wsEvent.ChargePointID, wsEvent.Error)

@@ -7,6 +7,7 @@ import (
 
 	"github.com/charging-platform/charge-point-gateway/internal/domain/events"
 	"github.com/charging-platform/charge-point-gateway/internal/domain/ocpp16"
+	"github.com/charging-platform/charge-point-gateway/internal/domain/protocol"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -131,9 +132,9 @@ func (m *MockModelConverter) ConvertStopTransaction(chargePointID string, req *o
 func TestNewProtocolHandler(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
-	
+
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	assert.NotNil(t, handler)
 	assert.Equal(t, processor, handler.processor)
 	assert.Equal(t, converter, handler.converter)
@@ -145,7 +146,7 @@ func TestNewProtocolHandler(t *testing.T) {
 
 func TestNewProtocolHandlerWithNilProcessor(t *testing.T) {
 	converter := NewMockModelConverter()
-	
+
 	assert.Panics(t, func() {
 		NewProtocolHandler(nil, converter, nil)
 	})
@@ -155,18 +156,18 @@ func TestProtocolHandler_GetVersion(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	version := handler.GetVersion()
-	assert.Equal(t, "1.6", version)
+	assert.Equal(t, protocol.OCPP_VERSION_1_6, version)
 }
 
 func TestProtocolHandler_GetSupportedActions(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	actions := handler.GetSupportedActions()
-	
+
 	assert.NotEmpty(t, actions)
 	assert.Contains(t, actions, "BootNotification")
 	assert.Contains(t, actions, "Heartbeat")
@@ -174,12 +175,12 @@ func TestProtocolHandler_GetSupportedActions(t *testing.T) {
 	assert.Contains(t, actions, "MeterValues")
 	assert.Contains(t, actions, "StartTransaction")
 	assert.Contains(t, actions, "StopTransaction")
-	
+
 	// 验证包含Central System发起的动作
 	assert.Contains(t, actions, "ChangeAvailability")
 	assert.Contains(t, actions, "RemoteStartTransaction")
 	assert.Contains(t, actions, "Reset")
-	
+
 	// 验证包含扩展Profile的动作
 	assert.Contains(t, actions, "UpdateFirmware")
 	assert.Contains(t, actions, "ReserveNow")
@@ -190,22 +191,22 @@ func TestProtocolHandler_StartStop(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	// 测试启动
 	err := handler.Start()
 	assert.NoError(t, err)
 	assert.True(t, handler.started)
-	
+
 	// 测试重复启动
 	err = handler.Start()
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "already started")
-	
+
 	// 测试停止
 	err = handler.Stop()
 	assert.NoError(t, err)
 	assert.False(t, handler.started)
-	
+
 	// 测试重复停止
 	err = handler.Stop()
 	assert.NoError(t, err)
@@ -215,20 +216,20 @@ func TestProtocolHandler_ProcessMessage(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	// 启动处理器
 	err := handler.Start()
 	require.NoError(t, err)
 	defer handler.Stop()
-	
+
 	// 测试处理有效的OCPP消息
 	ctx := context.Background()
 	message := []byte(`[2,"12345","BootNotification",{"chargePointVendor":"TestVendor","chargePointModel":"TestModel"}]`)
-	
+
 	response, err := handler.ProcessMessage(ctx, "CP001", message)
 	assert.NoError(t, err)
 	assert.NotNil(t, response)
-	
+
 	// 验证响应类型
 	processorResponse, ok := response.(*ProcessorResponse)
 	assert.True(t, ok)
@@ -240,16 +241,16 @@ func TestProtocolHandler_ProcessMessage_InvalidMessage(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	// 启动处理器
 	err := handler.Start()
 	require.NoError(t, err)
 	defer handler.Stop()
-	
+
 	// 测试处理无效消息
 	ctx := context.Background()
 	invalidMessage := []byte(`invalid json`)
-	
+
 	response, err := handler.ProcessMessage(ctx, "CP001", invalidMessage)
 	assert.Error(t, err)
 	assert.Nil(t, response)
@@ -260,10 +261,10 @@ func TestProtocolHandler_GetEventChannel(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	eventChan := handler.GetEventChannel()
 	assert.NotNil(t, eventChan)
-	
+
 	// 测试通道是否可读
 	select {
 	case <-eventChan:
@@ -277,10 +278,10 @@ func TestProtocolHandler_GetStats(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	stats := handler.GetStats()
-	
-	assert.Equal(t, "1.6", stats["version"])
+
+	assert.Equal(t, "ocpp1.6", stats["version"])
 	assert.False(t, stats["started"].(bool))
 	assert.Greater(t, stats["supported_actions"].(int), 0)
 	assert.Equal(t, 1000, stats["event_channel_size"])
@@ -292,42 +293,42 @@ func TestProtocolHandler_IsHealthy(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	// 未启动时应该不健康
 	assert.False(t, handler.IsHealthy())
-	
+
 	// 启动后应该健康
 	err := handler.Start()
 	require.NoError(t, err)
 	defer handler.Stop()
-	
+
 	assert.True(t, handler.IsHealthy())
 }
 
 func TestProtocolHandler_EventForwarding(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
-	
+
 	// 使用较小的事件通道进行测试
 	config := DefaultProtocolHandlerConfig()
 	config.EventChannelSize = 10
-	
+
 	handler := NewProtocolHandler(processor, converter, config)
-	
+
 	// 启动处理器
 	err := handler.Start()
 	require.NoError(t, err)
 	defer handler.Stop()
-	
+
 	// 获取事件通道
 	eventChan := handler.GetEventChannel()
-	
+
 	// 等待一小段时间让事件转发协程启动
 	time.Sleep(100 * time.Millisecond)
-	
+
 	// 验证事件通道可用
 	assert.NotNil(t, eventChan)
-	
+
 	// 注意：由于我们没有实际的事件生成机制，这里只验证通道的基本功能
 	select {
 	case <-eventChan:
@@ -339,7 +340,7 @@ func TestProtocolHandler_EventForwarding(t *testing.T) {
 
 func TestDefaultProtocolHandlerConfig(t *testing.T) {
 	config := DefaultProtocolHandlerConfig()
-	
+
 	assert.Equal(t, 1000, config.EventChannelSize)
 	assert.True(t, config.EnableEvents)
 	assert.True(t, config.EnableConversion)
@@ -351,7 +352,7 @@ func TestProtocolHandler_ConvertEvent(t *testing.T) {
 	processor := NewProcessor(DefaultProcessorConfig(), "pod-1", &mockConnectionStorage{})
 	converter := NewMockModelConverter()
 	handler := NewProtocolHandler(processor, converter, nil)
-	
+
 	// 创建测试事件
 	originalEvent := &events.ChargePointConnectedEvent{
 		BaseEvent: &events.BaseEvent{
@@ -364,12 +365,12 @@ func TestProtocolHandler_ConvertEvent(t *testing.T) {
 			Model:  "TestModel",
 		},
 	}
-	
+
 	// 测试事件转换
 	convertedEvent, err := handler.convertEvent(originalEvent)
 	assert.NoError(t, err)
 	assert.NotNil(t, convertedEvent)
-	
+
 	// 验证转换后的事件
 	assert.Equal(t, "CP001", convertedEvent.GetChargePointID())
 	assert.Equal(t, events.EventTypeChargePointConnected, convertedEvent.GetType())

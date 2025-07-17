@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# 测试运行脚本
+# 充电桩网关测试运行脚本
 # 用于启动测试环境并运行各种类型的测试
 
 set -e
@@ -31,47 +31,39 @@ log_error() {
 
 # 显示帮助信息
 show_help() {
-    cat << EOF
-Usage: $0 [OPTIONS] [TEST_TYPE]
-
-测试运行脚本，用于启动测试环境并运行各种类型的测试。
-
-TEST_TYPE:
-    unit            运行单元测试
-    integration     运行集成测试
-    e2e             运行端到端测试
-    performance     运行性能测试
-    all             运行所有测试（默认）
-
-OPTIONS:
-    -h, --help      显示此帮助信息
-    -v, --verbose   详细输出
-    -c, --clean     测试前清理环境
-    -s, --setup     只启动测试环境，不运行测试
-    -d, --down      停止并清理测试环境
-    --no-docker     不使用Docker环境（仅运行单元测试）
-    --debug         启用调试工具（Kafka UI, Redis Commander）
-
-Examples:
-    $0                          # 运行所有测试
-    $0 integration              # 只运行集成测试
-    $0 -c all                   # 清理环境后运行所有测试
-    $0 -s                       # 只启动测试环境
-    $0 -d                       # 停止测试环境
-    $0 --no-docker unit         # 不使用Docker运行单元测试
-    $0 --debug e2e              # 启用调试工具运行E2E测试
-
-EOF
+    echo "充电桩网关测试运行脚本"
+    echo ""
+    echo "用法: $0 [选项] [测试类型]"
+    echo ""
+    echo "选项:"
+    echo "  -h, --help     显示此帮助信息"
+    echo "  -v, --verbose  详细输出"
+    echo "  -c, --clean    测试前清理环境"
+    echo "  --no-build     跳过构建步骤"
+    echo "  --keep-env     测试后保持环境运行"
+    echo "  --local-only   仅运行本地测试（不启动Docker服务）"
+    echo ""
+    echo "测试类型:"
+    echo "  unit           运行单元测试"
+    echo "  integration    运行集成测试"
+    echo "  e2e            运行端到端测试"
+    echo "  performance    运行性能测试"
+    echo "  all            运行所有测试 (默认)"
+    echo ""
+    echo "示例:"
+    echo "  $0 integration              # 运行集成测试"
+    echo "  $0 -v -c e2e               # 详细输出，清理环境，运行E2E测试"
+    echo "  $0 --local-only unit       # 仅运行本地单元测试"
+    echo "  $0 --no-build --keep-env   # 跳过构建，保持环境，运行所有测试"
 }
 
 # 默认参数
-TEST_TYPE="all"
 VERBOSE=false
 CLEAN=false
-SETUP_ONLY=false
-DOWN_ONLY=false
-NO_DOCKER=false
-DEBUG=false
+NO_BUILD=false
+KEEP_ENV=false
+LOCAL_ONLY=false
+TEST_TYPE="all"
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -88,20 +80,16 @@ while [[ $# -gt 0 ]]; do
             CLEAN=true
             shift
             ;;
-        -s|--setup)
-            SETUP_ONLY=true
+        --no-build)
+            NO_BUILD=true
             shift
             ;;
-        -d|--down)
-            DOWN_ONLY=true
+        --keep-env)
+            KEEP_ENV=true
             shift
             ;;
-        --no-docker)
-            NO_DOCKER=true
-            shift
-            ;;
-        --debug)
-            DEBUG=true
+        --local-only)
+            LOCAL_ONLY=true
             shift
             ;;
         unit|integration|e2e|performance|all)
@@ -116,201 +104,281 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# 获取脚本目录
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-
-# 切换到项目目录
-cd "$PROJECT_DIR"
-
-# 停止并清理环境
-cleanup_environment() {
-    log_info "停止测试环境..."
+# 检查Docker和Docker Compose
+check_dependencies() {
+    log_info "检查依赖..."
     
-    if [ -f "test/docker-compose.test.yml" ]; then
-        docker-compose -f test/docker-compose.test.yml down -v --remove-orphans
-        log_success "测试环境已停止"
-    else
-        log_warning "Docker Compose文件不存在"
+    if [ "$LOCAL_ONLY" = false ]; then
+        if ! command -v docker &> /dev/null; then
+            log_error "Docker 未安装或不在PATH中"
+            exit 1
+        fi
+        
+        if ! command -v docker-compose &> /dev/null; then
+            log_error "Docker Compose 未安装或不在PATH中"
+            exit 1
+        fi
     fi
     
-    # 清理测试生成的文件
-    rm -f coverage.out coverage.html test-results.json
-    log_info "清理完成"
+    if ! command -v go &> /dev/null; then
+        log_error "Go 未安装或不在PATH中"
+        exit 1
+    fi
+    
+    log_success "依赖检查通过"
 }
 
-# 如果只是要停止环境
-if [ "$DOWN_ONLY" = true ]; then
-    cleanup_environment
-    exit 0
-fi
+# 清理环境
+cleanup_environment() {
+    if [ "$CLEAN" = true ] && [ "$LOCAL_ONLY" = false ]; then
+        log_info "清理测试环境..."
+        docker-compose -f test/docker-compose.test.yml down -v --remove-orphans 2>/dev/null || true
+        docker system prune -f 2>/dev/null || true
+        log_success "环境清理完成"
+    fi
+}
 
-# 清理环境（如果需要）
-if [ "$CLEAN" = true ]; then
-    cleanup_environment
-fi
+# 构建应用
+build_application() {
+    if [ "$NO_BUILD" = false ]; then
+        log_info "构建应用..."
+        
+        # 构建Go应用
+        go mod tidy
+        
+        if [ "$LOCAL_ONLY" = false ]; then
+            go build -o bin/gateway ./cmd/gateway
+            
+            # 构建Docker镜像
+            docker build -t charge-point-gateway:test .
+        fi
+        
+        log_success "应用构建完成"
+    else
+        log_info "跳过构建步骤"
+    fi
+}
 
 # 启动测试环境
-setup_environment() {
-    if [ "$NO_DOCKER" = true ]; then
-        log_info "跳过Docker环境启动"
+start_test_environment() {
+    if [ "$LOCAL_ONLY" = true ]; then
+        log_info "本地测试模式，跳过Docker环境启动"
         return 0
     fi
     
     log_info "启动测试环境..."
     
-    # 检查Docker是否运行
-    if ! docker info > /dev/null 2>&1; then
-        log_error "Docker未运行，请启动Docker"
-        exit 1
-    fi
+    # 启动基础服务 (Redis, Kafka)
+    docker-compose -f test/docker-compose.test.yml up -d redis-test zookeeper-test kafka-test
     
-    # 检查Docker Compose文件
-    if [ ! -f "test/docker-compose.test.yml" ]; then
-        log_error "Docker Compose文件不存在: test/docker-compose.test.yml"
-        exit 1
-    fi
-    
-    # 启动服务
-    local compose_args=""
-    if [ "$DEBUG" = true ]; then
-        compose_args="--profile debug"
-    fi
-    
-    docker-compose -f test/docker-compose.test.yml up -d $compose_args
-    
-    # 等待服务启动
+    # 等待服务健康检查通过
     log_info "等待服务启动..."
-    sleep 10
     
-    # 检查服务健康状态
-    local max_attempts=30
-    local attempt=1
-    
-    while [ $attempt -le $max_attempts ]; do
-        log_info "检查服务状态 (尝试 $attempt/$max_attempts)..."
-        
-        if docker-compose -f test/docker-compose.test.yml ps | grep -q "healthy"; then
-            log_success "测试环境启动成功"
-            return 0
+    # 等待Redis
+    timeout=60
+    while [ $timeout -gt 0 ]; do
+        if docker-compose -f test/docker-compose.test.yml exec -T redis-test redis-cli ping &> /dev/null; then
+            break
         fi
-        
-        sleep 5
-        ((attempt++))
+        sleep 1
+        ((timeout--))
     done
     
-    log_error "测试环境启动超时"
-    docker-compose -f test/docker-compose.test.yml logs
-    exit 1
+    if [ $timeout -eq 0 ]; then
+        log_error "Redis 启动超时"
+        exit 1
+    fi
+    
+    # 等待Kafka
+    timeout=120
+    while [ $timeout -gt 0 ]; do
+        if docker-compose -f test/docker-compose.test.yml exec -T kafka-test kafka-topics --bootstrap-server kafka-test:9092 --list &> /dev/null; then
+            break
+        fi
+        sleep 1
+        ((timeout--))
+    done
+    
+    if [ $timeout -eq 0 ]; then
+        log_error "Kafka 启动超时"
+        exit 1
+    fi
+    
+    log_success "测试环境启动完成"
 }
 
-# 运行测试
-run_tests() {
-    local test_type=$1
+# 创建Kafka主题
+create_kafka_topics() {
+    if [ "$LOCAL_ONLY" = true ]; then
+        return 0
+    fi
     
-    log_info "运行 $test_type 测试..."
+    log_info "创建Kafka主题..."
     
-    case $test_type in
+    # 创建测试主题
+    docker-compose -f test/docker-compose.test.yml exec -T kafka-test kafka-topics \
+        --bootstrap-server kafka-test:9092 \
+        --create --if-not-exists \
+        --topic ocpp-events-up-test \
+        --partitions 3 \
+        --replication-factor 1
+    
+    docker-compose -f test/docker-compose.test.yml exec -T kafka-test kafka-topics \
+        --bootstrap-server kafka-test:9092 \
+        --create --if-not-exists \
+        --topic commands-down-test \
+        --partitions 3 \
+        --replication-factor 1
+    
+    log_success "Kafka主题创建完成"
+}
+
+# 运行单元测试
+run_unit_tests() {
+    log_info "运行单元测试..."
+    
+    if [ "$VERBOSE" = true ]; then
+        go test -v ./internal/... -timeout 30s
+    else
+        go test ./internal/... -timeout 30s
+    fi
+    
+    if [ $? -eq 0 ]; then
+        log_success "单元测试通过"
+    else
+        log_error "单元测试失败"
+        return 1
+    fi
+}
+
+# 运行集成测试
+run_integration_tests() {
+    if [ "$LOCAL_ONLY" = true ]; then
+        log_warning "本地模式跳过集成测试（需要Docker环境）"
+        return 0
+    fi
+    
+    log_info "运行集成测试..."
+    
+    if [ "$VERBOSE" = true ]; then
+        go test -v ./test/integration/... -timeout 60s
+    else
+        go test ./test/integration/... -timeout 60s
+    fi
+    
+    if [ $? -eq 0 ]; then
+        log_success "集成测试通过"
+    else
+        log_error "集成测试失败"
+        return 1
+    fi
+}
+
+# 运行E2E测试
+run_e2e_tests() {
+    if [ "$LOCAL_ONLY" = true ]; then
+        log_warning "本地模式跳过E2E测试（需要Docker环境）"
+        return 0
+    fi
+    
+    log_info "启动网关服务进行E2E测试..."
+    
+    # 启动网关服务
+    docker-compose -f test/docker-compose.test.yml up -d gateway-test
+    
+    # 等待网关服务启动
+    timeout=60
+    while [ $timeout -gt 0 ]; do
+        if curl -f http://localhost:8081/health &> /dev/null; then
+            break
+        fi
+        sleep 1
+        ((timeout--))
+    done
+    
+    if [ $timeout -eq 0 ]; then
+        log_error "网关服务启动超时"
+        return 1
+    fi
+    
+    log_info "运行E2E测试..."
+    
+    if [ "$VERBOSE" = true ]; then
+        go test -v ./test/e2e/... -timeout 120s
+    else
+        go test ./test/e2e/... -timeout 120s
+    fi
+    
+    if [ $? -eq 0 ]; then
+        log_success "E2E测试通过"
+    else
+        log_error "E2E测试失败"
+        return 1
+    fi
+}
+
+# 主函数
+main() {
+    log_info "开始运行充电桩网关测试 (类型: $TEST_TYPE)"
+    
+    # 检查依赖
+    check_dependencies
+    
+    # 清理环境
+    cleanup_environment
+    
+    # 构建应用
+    build_application
+    
+    # 启动测试环境
+    start_test_environment
+    
+    # 创建Kafka主题
+    create_kafka_topics
+    
+    # 运行测试
+    test_failed=false
+    
+    case $TEST_TYPE in
         unit)
-            go test -v -race -coverprofile=coverage.out ./internal/... ./cmd/...
+            run_unit_tests || test_failed=true
             ;;
         integration)
-            if [ "$NO_DOCKER" = true ]; then
-                log_warning "集成测试需要Docker环境，跳过"
-                return 0
-            fi
-            go test -v -race -tags=integration ./test/integration/...
+            run_integration_tests || test_failed=true
             ;;
         e2e)
-            if [ "$NO_DOCKER" = true ]; then
-                log_warning "E2E测试需要Docker环境，跳过"
-                return 0
-            fi
-            go test -v -race -tags=e2e ./test/e2e/...
-            ;;
-        performance)
-            if [ "$NO_DOCKER" = true ]; then
-                log_warning "性能测试需要Docker环境，跳过"
-                return 0
-            fi
-            go test -v -race -tags=performance ./test/e2e/performance/...
+            run_e2e_tests || test_failed=true
             ;;
         all)
-            run_tests unit
-            if [ "$NO_DOCKER" = false ]; then
-                run_tests integration
-                run_tests e2e
+            run_unit_tests || test_failed=true
+            if [ "$LOCAL_ONLY" = false ]; then
+                run_integration_tests || test_failed=true
+                run_e2e_tests || test_failed=true
             fi
-            ;;
-        *)
-            log_error "未知测试类型: $test_type"
-            exit 1
             ;;
     esac
     
-    if [ $? -eq 0 ]; then
-        log_success "$test_type 测试通过"
-    else
-        log_error "$test_type 测试失败"
+    # 停止测试环境
+    if [ "$LOCAL_ONLY" = false ] && [ "$KEEP_ENV" = false ]; then
+        log_info "停止测试环境..."
+        docker-compose -f test/docker-compose.test.yml down
+        log_success "测试环境已停止"
+    elif [ "$LOCAL_ONLY" = false ] && [ "$KEEP_ENV" = true ]; then
+        log_info "保持测试环境运行"
+        log_info "可以通过以下命令停止: docker-compose -f test/docker-compose.test.yml down"
+    fi
+    
+    # 输出结果
+    if [ "$test_failed" = true ]; then
+        log_error "测试失败"
         exit 1
+    else
+        log_success "所有测试通过"
     fi
 }
 
-# 生成测试报告
-generate_report() {
-    if [ -f "coverage.out" ]; then
-        log_info "生成测试覆盖率报告..."
-        go tool cover -html=coverage.out -o coverage.html
-        go tool cover -func=coverage.out
-        log_success "覆盖率报告已生成: coverage.html"
-    fi
-}
+# 捕获中断信号，确保清理
+trap 'log_warning "收到中断信号，清理环境..."; docker-compose -f test/docker-compose.test.yml down 2>/dev/null || true; exit 1' INT TERM
 
-# 显示环境信息
-show_environment_info() {
-    if [ "$NO_DOCKER" = false ]; then
-        log_info "测试环境信息:"
-        echo "  Gateway URL: http://localhost:8081"
-        echo "  WebSocket URL: ws://localhost:8081/ocpp"
-        echo "  Metrics: http://localhost:9091/metrics"
-        echo "  Health Check: http://localhost:8083/health"
-        
-        if [ "$DEBUG" = true ]; then
-            echo "  Kafka UI: http://localhost:8082"
-            echo "  Redis Commander: http://localhost:8084"
-        fi
-    fi
-}
-
-# 主执行流程
-main() {
-    log_info "开始执行测试..."
-    log_info "测试类型: $TEST_TYPE"
-    log_info "项目目录: $PROJECT_DIR"
-    
-    # 启动环境
-    setup_environment
-    
-    # 显示环境信息
-    show_environment_info
-    
-    # 如果只是启动环境
-    if [ "$SETUP_ONLY" = true ]; then
-        log_success "测试环境已启动，使用 '$0 -d' 停止环境"
-        exit 0
-    fi
-    
-    # 运行测试
-    run_tests "$TEST_TYPE"
-    
-    # 生成报告
-    generate_report
-    
-    log_success "所有测试完成"
-}
-
-# 捕获退出信号，确保清理
-trap 'log_warning "收到中断信号，正在清理..."; cleanup_environment; exit 1' INT TERM
-
-# 执行主函数
+# 运行主函数
 main

@@ -73,6 +73,24 @@ cp configs/config.yaml.example configs/config.yaml
 go run cmd/gateway/main.go
 ```
 
+### WebSocket连接测试
+
+网关启动后，可以通过以下方式测试WebSocket连接：
+
+```bash
+# 使用wscat测试连接
+wscat -c ws://localhost:8080/ocpp/CP-001 -s ocpp1.6
+
+# 发送BootNotification消息
+[2,"msg001","BootNotification",{"chargePointVendor":"TestVendor","chargePointModel":"TestModel"}]
+
+# 检查健康状态
+curl http://localhost:8080/health
+
+# 查看连接状态
+curl http://localhost:8080/connections
+```
+
 ### 配置说明
 
 主要配置项说明：

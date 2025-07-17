@@ -1,0 +1,70 @@
+# Charge Point Gateway - Production Environment Configuration
+# 生产环境配置，注重性能和安全
+
+# 应用信息
+app:
+  profile: "prod"
+
+# 服务器配置 - 生产环境
+server:
+  host: "0.0.0.0"
+  port: 8080
+  read_timeout: "30s"  # 生产环境较短超时
+  write_timeout: "30s"
+  max_connections: 50000
+
+# Redis配置 - 生产环境（通过环境变量配置）
+redis:
+  addr: "redis-cluster:6379"  # 默认值，实际通过环境变量覆盖
+  password: ""  # 通过环境变量设置
+  db: 0
+  pool_size: 200
+  min_idle_conns: 20
+  dial_timeout: "3s"
+  read_timeout: "2s"
+  write_timeout: "2s"
+
+# Kafka配置 - 生产环境
+kafka:
+  brokers:
+    - "kafka-cluster:9092"  # 默认值，实际通过环境变量覆盖
+  consumer_group: "gateway-prod-consumer"
+  partition_num: 6  # 生产环境更多分区
+  producer:
+    retry_max: 5  # 生产环境更多重试
+    return_successes: true
+    flush_frequency: "50ms"  # 生产环境更频繁刷新
+
+# 日志配置 - 生产环境
+log:
+  level: "warn"  # 生产环境只记录警告和错误
+  format: "json"  # 生产环境使用JSON格式
+  output: "stdout"
+
+# 监控配置 - 生产环境
+monitoring:
+  metrics_addr: ":9090"
+  health_check_port: 8081
+  pprof_enabled: false  # 生产环境关闭性能分析
+
+# 缓存配置 - 生产环境大缓存
+cache:
+  max_size: 50000
+  ttl: "2h"
+  cleanup_interval: "15m"
+  memory_limit_mb: 1024
+
+# OCPP配置 - 生产环境
+ocpp:
+  supported_versions:
+    - "1.6"
+  heartbeat_interval: "300s"
+  connection_timeout: "60s"
+  message_timeout: "30s"
+
+# 安全配置 - 生产环境启用TLS
+security:
+  tls_enabled: true  # 生产环境启用TLS
+  cert_file: "/app/certs/server.crt"
+  key_file: "/app/certs/server.key"
+  client_auth: true

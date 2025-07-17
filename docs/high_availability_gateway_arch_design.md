@@ -252,6 +252,122 @@ charge-point-gateway/
 └── Dockerfile
 ```
 
+### 6.3. 核心数据流序列图
+
+本节详细描述了充电桩从WebSocket握手到消息发送至Kafka的完整数据流，包括所有涉及的类、方法和组件交互。
+
+#### 6.3.1. WebSocket连接建立到消息发布完整流程
+
+```mermaid
+sequenceDiagram
+    participant CP as 充电桩客户端
+    participant HTTP as HTTP服务器
+    participant WM as WebSocket管理器<br/>(Manager)
+    participant CW as 连接包装器<br/>(ConnectionWrapper)
+    participant MD as 消息分发器<br/>(MessageDispatcher)
+    participant PH as 协议处理器<br/>(ProtocolHandler)
+    participant CV as 转换器<br/>(Converter)
+    participant KP as Kafka生产者<br/>(KafkaProducer)
+    participant Kafka as Kafka集群
+
+    Note over CP,Kafka: 1. WebSocket连接握手阶段
+    CP->>HTTP: HTTP GET /ws/CP-001<br/>Upgrade: websocket<br/>Sec-WebSocket-Protocol: ocpp1.6
+    HTTP->>WM: handleWebSocketUpgrade(w, r)
+    WM->>WM: extractChargePointID(r.URL.Path)
+    WM->>WM: HandleConnection(w, r, "CP-001")
+    WM->>WM: upgrader.Upgrade(w, r, nil)
+    WM->>CW: createConnectionWrapper(conn, "CP-001", r)
+    Note over CW: 创建连接包装器<br/>设置元数据和分发器引用
+    WM->>WM: connections["CP-001"] = wrapper
+    WM->>CW: 启动 handleConnectionWrapper(wrapper)
+
+    Note over CP,Kafka: 2. 连接协程启动阶段
+    CW->>CW: 启动 sendRoutine()
+    CW->>CW: 启动 pingRoutine()
+    CW->>CW: 启动 receiveRoutine(eventChan)
+    WM->>WM: 发送连接事件 EventTypeConnected
+
+    Note over CP,Kafka: 3. 消息接收和处理阶段
+    CP->>CW: WebSocket文本消息<br/>[2,"msg-001","BootNotification",{...}]
+    CW->>CW: conn.ReadMessage()
+    CW->>CW: updateActivity()
+    CW->>CW: metadata.IncrementMessagesReceived()
+
+    Note over CW,MD: 直接分发器调用路径
+    CW->>CW: handleMessage(message)
+    CW->>CW: 从metadata获取协议版本 "ocpp1.6"
+    CW->>MD: DispatchMessage(ctx, "CP-001", "ocpp1.6", message)
+
+    Note over MD,PH: 4. 消息分发和协议处理阶段
+    MD->>MD: protocol.NormalizeVersion("ocpp1.6")
+    MD->>MD: getHandlerForVersion("ocpp1.6")
+    MD->>PH: ProcessMessage(ctx, "CP-001", message)
+
+    Note over PH,CV: 5. 协议解析和转换阶段
+    PH->>PH: 解析OCPP消息格式<br/>识别消息类型: BootNotification
+    PH->>CV: ConvertBootNotification(req)
+    CV->>CV: 创建 ChargePointInfo{<br/>  ID: "CP-001",<br/>  ProtocolVersion: "ocpp1.6"<br/>}
+    CV->>CV: 创建 DeviceOnlineEvent{<br/>  Type: "device.online",<br/>  ChargePointInfo: {...}<br/>}
+    CV-->>PH: 返回标准业务事件
+    PH-->>MD: 返回响应和事件
+
+    Note over MD,KP: 6. 事件发布阶段
+    MD->>KP: PublishEvent(deviceOnlineEvent)
+    KP->>KP: event.ToJSON() 序列化事件
+    KP->>KP: 创建 ProducerMessage{<br/>  Topic: "ocpp-events-up",<br/>  Key: "CP-001",<br/>  Value: eventData<br/>}
+    KP->>Kafka: producer.Input() <- msg
+    Kafka-->>KP: 异步确认发送成功
+    KP->>KP: handleSuccesses() 处理成功回调
+
+    Note over CP,Kafka: 7. 响应返回阶段
+    MD-->>CW: 返回OCPP响应消息
+    CW->>CP: WebSocket响应<br/>[3,"msg-001",{"status":"Accepted"}]
+
+    Note over CP,Kafka: 8. 事件通知阶段（用于监控）
+    CW->>WM: 发送消息事件到 eventChan
+    Note over WM: 主函数事件处理器<br/>接收事件用于日志和监控
+```
+
+#### 6.3.2. 关键组件和方法说明
+
+**WebSocket管理器 (Manager)**
+- `handleWebSocketUpgrade()`: 处理HTTP升级请求
+- `HandleConnection()`: 建立WebSocket连接
+- `createConnectionWrapper()`: 创建连接包装器
+
+**连接包装器 (ConnectionWrapper)**
+- `receiveRoutine()`: 消息接收协程
+- `handleMessage()`: 直接调用分发器处理消息
+- `sendRoutine()`: 消息发送协程
+- `pingRoutine()`: 心跳检测协程
+
+**消息分发器 (MessageDispatcher)**
+- `DispatchMessage()`: 分发消息到协议处理器
+- `getHandlerForVersion()`: 获取版本对应的处理器
+- `IdentifyProtocolVersion()`: 自动识别协议版本
+
+**协议处理器 (ProtocolHandler)**
+- `ProcessMessage()`: 处理特定版本的OCPP消息
+- 解析消息格式并调用对应的转换方法
+
+**转换器 (Converter)**
+- `ConvertBootNotification()`: 转换BootNotification消息
+- `ConvertMeterValues()`: 转换MeterValues消息
+- `ConvertStatusNotification()`: 转换StatusNotification消息
+
+**Kafka生产者 (KafkaProducer)**
+- `PublishEvent()`: 发布事件到Kafka
+- `handleSuccesses()`: 处理发送成功回调
+- `handleErrors()`: 处理发送失败回调
+
+#### 6.3.3. 数据流特点
+
+1. **双路径设计**: 消息同时通过直接分发器调用和事件通道，确保处理效率和监控完整性
+2. **异步处理**: Kafka发送采用异步模式，不阻塞WebSocket响应
+3. **协议无关**: 分发器支持多协议版本，便于扩展
+4. **错误隔离**: 各组件独立处理错误，避免级联失败
+5. **可观测性**: 完整的事件链路便于监控和调试
+
 
 ---
 

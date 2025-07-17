@@ -27,7 +27,7 @@ func TestExample(t *testing.T) {
 	t.Run("Kafka Connection", func(t *testing.T) {
 		// 发送测试消息
 		testMessage := "test-message"
-		err := env.KafkaProducer.SendMessage(&sarama.ProducerMessage{
+		_, _, err := env.KafkaProducer.SendMessage(&sarama.ProducerMessage{
 			Topic: "test-topic",
 			Value: sarama.StringEncoder(testMessage),
 		})
@@ -37,7 +37,7 @@ func TestExample(t *testing.T) {
 	// 测试WebSocket连接
 	t.Run("WebSocket Connection", func(t *testing.T) {
 		chargePointID := "CP-TEST"
-		
+
 		// 创建WebSocket客户端
 		wsClient, err := utils.NewWebSocketClient(env.GatewayURL, chargePointID)
 		require.NoError(t, err, "Should be able to create WebSocket client")
@@ -87,7 +87,7 @@ func TestLoadTestData(t *testing.T) {
 	var payload map[string]interface{}
 	err = json.Unmarshal(data, &payload)
 	require.NoError(t, err, "Test data should be valid JSON")
-	
+
 	// 验证必要字段
 	assert.Contains(t, payload, "chargePointVendor")
 	assert.Contains(t, payload, "chargePointModel")

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/charging-platform/charge-point-gateway/internal/domain/events"
+	"github.com/charging-platform/charge-point-gateway/internal/domain/protocol"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
 	"github.com/charging-platform/charge-point-gateway/internal/metrics"
 )
@@ -15,19 +16,19 @@ import (
 type ProtocolHandler interface {
 	// ProcessMessage 处理协议消息
 	ProcessMessage(ctx context.Context, chargePointID string, message []byte) (interface{}, error)
-	
+
 	// GetSupportedActions 获取支持的动作列表
 	GetSupportedActions() []string
-	
+
 	// GetVersion 获取协议版本
 	GetVersion() string
-	
+
 	// Start 启动处理器
 	Start() error
-	
+
 	// Stop 停止处理器
 	Stop() error
-	
+
 	// GetEventChannel 获取事件通道
 	GetEventChannel() <-chan events.Event
 }
@@ -36,31 +37,31 @@ type ProtocolHandler interface {
 type MessageDispatcher interface {
 	// RegisterHandler 注册协议处理器
 	RegisterHandler(version string, handler ProtocolHandler) error
-	
+
 	// UnregisterHandler 注销协议处理器
 	UnregisterHandler(version string) error
-	
+
 	// DispatchMessage 分发消息到对应的协议处理器
 	DispatchMessage(ctx context.Context, chargePointID string, protocolVersion string, message []byte) (interface{}, error)
-	
+
 	// IdentifyProtocolVersion 识别协议版本
 	IdentifyProtocolVersion(chargePointID string, message []byte) (string, error)
-	
+
 	// GetRegisteredVersions 获取已注册的协议版本列表
 	GetRegisteredVersions() []string
-	
+
 	// GetHandlerForVersion 获取指定版本的处理器
 	GetHandlerForVersion(version string) (ProtocolHandler, bool)
-	
+
 	// Start 启动分发器
 	Start() error
-	
+
 	// Stop 停止分发器
 	Stop() error
-	
+
 	// GetEventChannel 获取统一事件通道
 	GetEventChannel() <-chan events.Event
-	
+
 	// GetStats 获取分发器统计信息
 	GetStats() DispatcherStats
 }
@@ -69,16 +70,16 @@ type MessageDispatcher interface {
 type DispatcherConfig struct {
 	// 默认协议版本
 	DefaultProtocolVersion string `json:"default_protocol_version"`
-	
+
 	// 事件通道缓冲区大小
 	EventChannelBuffer int `json:"event_channel_buffer"`
-	
+
 	// 是否启用版本自动识别
 	EnableVersionDetection bool `json:"enable_version_detection"`
-	
+
 	// 消息处理超时时间
 	MessageTimeout time.Duration `json:"message_timeout"`
-	
+
 	// 是否启用统计信息收集
 	EnableStats bool `json:"enable_stats"`
 }
@@ -86,7 +87,7 @@ type DispatcherConfig struct {
 // DefaultDispatcherConfig 默认分发器配置
 func DefaultDispatcherConfig() *DispatcherConfig {
 	return &DispatcherConfig{
-		DefaultProtocolVersion: "1.6",
+		DefaultProtocolVersion: protocol.GetDefaultVersion(),
 		EventChannelBuffer:     1000,
 		EnableVersionDetection: true,
 		MessageTimeout:         30 * time.Second,
@@ -98,25 +99,25 @@ func DefaultDispatcherConfig() *DispatcherConfig {
 type DispatcherStats struct {
 	// 总消息数
 	TotalMessages int64 `json:"total_messages"`
-	
+
 	// 成功处理的消息数
 	SuccessfulMessages int64 `json:"successful_messages"`
-	
+
 	// 失败的消息数
 	FailedMessages int64 `json:"failed_messages"`
-	
+
 	// 按版本分组的消息统计
 	MessagesByVersion map[string]int64 `json:"messages_by_version"`
-	
+
 	// 平均处理时间
 	AverageProcessingTime time.Duration `json:"average_processing_time"`
-	
+
 	// 最大处理时间
 	MaxProcessingTime time.Duration `json:"max_processing_time"`
-	
+
 	// 启动时间
 	StartTime time.Time `json:"start_time"`
-	
+
 	// 运行时间
 	Uptime time.Duration `json:"uptime"`
 }
@@ -125,50 +126,52 @@ type DispatcherStats struct {
 type DefaultMessageDispatcher struct {
 	// 配置
 	config *DispatcherConfig
-	
+
 	// 协议处理器映射 (版本 -> 处理器)
 	handlers map[string]ProtocolHandler
-	
+
 	// 读写锁保护handlers映射
 	handlersMutex sync.RWMutex
-	
+
 	// 统一事件通道
 	eventChan chan events.Event
-	
+
 	// 统计信息
 	stats DispatcherStats
-	
+
 	// 统计信息锁
 	statsMutex sync.RWMutex
-	
+
 	// 日志器
 	logger *logger.Logger
-	
+
 	// 上下文和取消函数
 	ctx    context.Context
 	cancel context.CancelFunc
-	
+
 	// 等待组
 	wg sync.WaitGroup
-	
+
 	// 是否已启动
 	started bool
-	
+
 	// 启动锁
 	startMutex sync.Mutex
 }
 
 // NewDefaultMessageDispatcher 创建新的默认消息分发器
-func NewDefaultMessageDispatcher(config *DispatcherConfig) *DefaultMessageDispatcher {
+func NewDefaultMessageDispatcher(config *DispatcherConfig, log *logger.Logger) *DefaultMessageDispatcher {
 	if config == nil {
 		config = DefaultDispatcherConfig()
 	}
-	
-	// 创建日志器
-	l, _ := logger.New(logger.DefaultConfig())
-	
+
+	if log == nil {
+		// 如果没有提供日志器，则创建一个默认的
+		log, _ = logger.New(logger.DefaultConfig())
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	return &DefaultMessageDispatcher{
 		config:    config,
 		handlers:  make(map[string]ProtocolHandler),
@@ -177,7 +180,7 @@ func NewDefaultMessageDispatcher(config *DispatcherConfig) *DefaultMessageDispat
 			MessagesByVersion: make(map[string]int64),
 			StartTime:         time.Now(),
 		},
-		logger: l,
+		logger: log,
 		ctx:    ctx,
 		cancel: cancel,
 	}
@@ -191,17 +194,17 @@ func (d *DefaultMessageDispatcher) RegisterHandler(version string, handler Proto
 	if handler == nil {
 		return fmt.Errorf("handler cannot be nil")
 	}
-	
+
 	d.handlersMutex.Lock()
 	defer d.handlersMutex.Unlock()
-	
+
 	if _, exists := d.handlers[version]; exists {
 		return fmt.Errorf("handler for version %s already registered", version)
 	}
-	
+
 	d.handlers[version] = handler
 	d.logger.Infof("Registered protocol handler for version %s", version)
-	
+
 	return nil
 }
 
@@ -209,14 +212,14 @@ func (d *DefaultMessageDispatcher) RegisterHandler(version string, handler Proto
 func (d *DefaultMessageDispatcher) UnregisterHandler(version string) error {
 	d.handlersMutex.Lock()
 	defer d.handlersMutex.Unlock()
-	
+
 	if _, exists := d.handlers[version]; !exists {
 		return fmt.Errorf("no handler registered for version %s", version)
 	}
-	
+
 	delete(d.handlers, version)
 	d.logger.Infof("Unregistered protocol handler for version %s", version)
-	
+
 	return nil
 }
 
@@ -224,12 +227,12 @@ func (d *DefaultMessageDispatcher) UnregisterHandler(version string) error {
 func (d *DefaultMessageDispatcher) GetRegisteredVersions() []string {
 	d.handlersMutex.RLock()
 	defer d.handlersMutex.RUnlock()
-	
+
 	versions := make([]string, 0, len(d.handlers))
 	for version := range d.handlers {
 		versions = append(versions, version)
 	}
-	
+
 	return versions
 }
 
@@ -257,13 +260,16 @@ func (d *DefaultMessageDispatcher) IdentifyProtocolVersion(chargePointID string,
 
 	d.logger.Debugf("Identifying protocol version for charge point %s", chargePointID)
 
-	// 目前只支持OCPP 1.6，直接返回
-	return "1.6", nil
+	// 目前只支持OCPP 1.6，返回标准格式
+	return protocol.GetDefaultVersion(), nil
 }
 
 // DispatchMessage 分发消息到对应的协议处理器
 func (d *DefaultMessageDispatcher) DispatchMessage(ctx context.Context, chargePointID string, protocolVersion string, message []byte) (interface{}, error) {
 	startTime := time.Now()
+
+	// 调试日志
+	d.logger.Errorf("DEBUG: DispatchMessage called with protocolVersion='%s' for %s", protocolVersion, chargePointID)
 
 	// 更新统计信息
 	d.updateStats(protocolVersion, startTime, true)
@@ -276,12 +282,21 @@ func (d *DefaultMessageDispatcher) DispatchMessage(ctx context.Context, chargePo
 			d.updateStats(protocolVersion, startTime, false)
 			return nil, fmt.Errorf("failed to identify protocol version: %w", err)
 		}
+		d.logger.Errorf("DEBUG: Auto-identified protocol version as '%s'", protocolVersion)
+	}
+
+	// 规范化协议版本
+	normalizedVersion := protocol.NormalizeVersion(protocolVersion)
+	if normalizedVersion != "" && normalizedVersion != protocolVersion {
+		d.logger.Errorf("DEBUG: Normalized protocol version from '%s' to '%s'", protocolVersion, normalizedVersion)
+		protocolVersion = normalizedVersion
 	}
 
 	// 获取对应版本的处理器
 	handler, exists := d.GetHandlerForVersion(protocolVersion)
 	if !exists {
 		d.updateStats(protocolVersion, startTime, false)
+		d.logger.Errorf("DEBUG: Available handlers: %v", d.GetRegisteredVersions())
 		return nil, fmt.Errorf("no handler registered for protocol version %s", protocolVersion)
 	}
 

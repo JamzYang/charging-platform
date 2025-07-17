@@ -36,7 +36,7 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 
 	// 用于同步的WaitGroup
 	var wg sync.WaitGroup
-	
+
 	// 启动时间
 	startTime := time.Now()
 
@@ -45,9 +45,9 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 		wg.Add(1)
 		go func(index int) {
 			defer wg.Done()
-			
+
 			chargePointID := fmt.Sprintf("CP-%04d", index)
-			
+
 			// 创建WebSocket连接
 			wsClient, err := utils.NewWebSocketClient(env.GatewayURL, chargePointID)
 			if err != nil {
@@ -56,27 +56,27 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 				return
 			}
 			defer wsClient.Close()
-			
+
 			atomic.AddInt64(&successfulConnections, 1)
-			
+
 			// 执行BootNotification
 			err = performBootNotification(t, wsClient, chargePointID)
 			if err != nil {
 				t.Logf("BootNotification failed for %s: %v", chargePointID, err)
 				return
 			}
-			
+
 			// 保持连接并定期发送心跳
 			ticker := time.NewTicker(5 * time.Second)
 			defer ticker.Stop()
-			
+
 			endTime := startTime.Add(testDuration)
-			
+
 			for time.Now().Before(endTime) {
 				select {
 				case <-ticker.C:
 					atomic.AddInt64(&totalMessages, 1)
-					
+
 					// 发送心跳
 					err := sendHeartbeat(wsClient, chargePointID)
 					if err != nil {
@@ -84,9 +84,9 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 						t.Logf("Heartbeat failed for %s: %v", chargePointID, err)
 						return
 					}
-					
+
 					atomic.AddInt64(&successfulMessages, 1)
-					
+
 				case <-time.After(100 * time.Millisecond):
 					// 继续循环
 				}
@@ -96,13 +96,13 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 
 	// 等待所有连接完成
 	wg.Wait()
-	
+
 	totalTime := time.Since(startTime)
-	
+
 	// 计算统计信息
 	successConnRate := float64(successfulConnections) / float64(connectionCount) * 100
 	messageSuccessRate := float64(successfulMessages) / float64(totalMessages) * 100
-	
+
 	// 验证结果
 	t.Logf("Test Results:")
 	t.Logf("  Total time: %v", totalTime)
@@ -111,15 +111,15 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 	t.Logf("  Total messages: %d", totalMessages)
 	t.Logf("  Successful messages: %d (%.2f%%)", successfulMessages, messageSuccessRate)
 	t.Logf("  Failed messages: %d", failedMessages)
-	
+
 	// 断言：至少80%的连接应该成功
 	assert.Greater(t, successConnRate, 80.0, "At least 80% of connections should succeed")
-	
+
 	// 断言：至少90%的消息应该成功
 	if totalMessages > 0 {
 		assert.Greater(t, messageSuccessRate, 90.0, "At least 90% of messages should succeed")
 	}
-	
+
 	t.Log("TC-E2E-04 Concurrent connections test passed")
 }
 
@@ -134,29 +134,29 @@ func TestTC_E2E_05_HighThroughput(t *testing.T) {
 	messagesPerConnection := 20
 	messageInterval := 100 * time.Millisecond
 
-	t.Logf("Starting high throughput test with %d connections, %d messages each", 
+	t.Logf("Starting high throughput test with %d connections, %d messages each",
 		connectionCount, messagesPerConnection)
 
 	// 统计信息
 	var (
-		totalMessages     int64
+		totalMessages      int64
 		successfulMessages int64
-		failedMessages    int64
-		totalLatency      int64
-		messageCount      int64
+		failedMessages     int64
+		totalLatency       int64
+		messageCount       int64
 	)
 
 	// 建立连接
 	var wsClients []*utils.WebSocketClient
 	for i := 0; i < connectionCount; i++ {
 		chargePointID := fmt.Sprintf("CP-%04d", i)
-		
+
 		wsClient, err := utils.NewWebSocketClient(env.GatewayURL, chargePointID)
 		require.NoError(t, err)
 		defer wsClient.Close()
-		
+
 		wsClients = append(wsClients, wsClient)
-		
+
 		// 完成BootNotification
 		err = performBootNotification(t, wsClient, chargePointID)
 		require.NoError(t, err)
@@ -166,23 +166,21 @@ func TestTC_E2E_05_HighThroughput(t *testing.T) {
 
 	// 开始时间
 	startTime := time.Now()
-	
+
 	// 并发发送消息
 	var wg sync.WaitGroup
-	
+
 	for i, wsClient := range wsClients {
 		wg.Add(1)
 		go func(clientIndex int, client *utils.WebSocketClient) {
 			defer wg.Done()
-			
-			chargePointID := fmt.Sprintf("CP-%04d", clientIndex)
-			
+
 			for j := 0; j < messagesPerConnection; j++ {
 				atomic.AddInt64(&totalMessages, 1)
-				
+
 				// 记录消息发送时间
 				msgStartTime := time.Now()
-				
+
 				// 创建MeterValues消息
 				meterPayload := map[string]interface{}{
 					"connectorId":   1,
@@ -239,14 +237,14 @@ func TestTC_E2E_05_HighThroughput(t *testing.T) {
 
 	// 等待所有消息发送完成
 	wg.Wait()
-	
+
 	totalTime := time.Since(startTime)
-	
+
 	// 计算统计信息
 	successRate := float64(successfulMessages) / float64(totalMessages) * 100
 	avgLatency := time.Duration(totalLatency / messageCount)
 	throughput := float64(successfulMessages) / totalTime.Seconds()
-	
+
 	t.Logf("High Throughput Test Results:")
 	t.Logf("  Total time: %v", totalTime)
 	t.Logf("  Total messages: %d", totalMessages)
@@ -254,12 +252,12 @@ func TestTC_E2E_05_HighThroughput(t *testing.T) {
 	t.Logf("  Failed messages: %d", failedMessages)
 	t.Logf("  Average latency: %v", avgLatency)
 	t.Logf("  Throughput: %.2f messages/second", throughput)
-	
+
 	// 验证性能指标
 	assert.Greater(t, successRate, 95.0, "Success rate should be > 95%")
 	assert.Less(t, avgLatency, 1*time.Second, "Average latency should be < 1 second")
 	assert.Greater(t, throughput, 10.0, "Throughput should be > 10 messages/second")
-	
+
 	t.Log("TC-E2E-05 High throughput test passed")
 }
 
@@ -272,46 +270,46 @@ func TestTC_E2E_04_05_LoadStability(t *testing.T) {
 	// 测试参数
 	connectionCount := 30
 	testDuration := 30 * time.Second
-	
+
 	t.Logf("Starting load stability test with %d connections for %v", connectionCount, testDuration)
 
 	// 建立连接
 	var wsClients []*utils.WebSocketClient
 	for i := 0; i < connectionCount; i++ {
 		chargePointID := fmt.Sprintf("CP-%04d", i)
-		
+
 		wsClient, err := utils.NewWebSocketClient(env.GatewayURL, chargePointID)
 		require.NoError(t, err)
 		defer wsClient.Close()
-		
+
 		wsClients = append(wsClients, wsClient)
-		
+
 		err = performBootNotification(t, wsClient, chargePointID)
 		require.NoError(t, err)
 	}
 
 	// 统计信息
 	var (
-		totalOperations    int64
-		successfulOps      int64
-		connectionDrops    int64
+		totalOperations int64
+		successfulOps   int64
+		connectionDrops int64
 	)
 
 	// 运行负载测试
 	var wg sync.WaitGroup
 	endTime := time.Now().Add(testDuration)
-	
+
 	for i, wsClient := range wsClients {
 		wg.Add(1)
 		go func(clientIndex int, client *utils.WebSocketClient) {
 			defer wg.Done()
-			
+
 			operationCount := 0
-			
+
 			for time.Now().Before(endTime) {
 				atomic.AddInt64(&totalOperations, 1)
 				operationCount++
-				
+
 				// 随机选择操作类型
 				switch operationCount % 3 {
 				case 0:
@@ -321,7 +319,7 @@ func TestTC_E2E_04_05_LoadStability(t *testing.T) {
 						atomic.AddInt64(&connectionDrops, 1)
 						return
 					}
-					
+
 				case 1:
 					// 发送状态通知
 					err := sendStatusNotification(client, clientIndex)
@@ -329,7 +327,7 @@ func TestTC_E2E_04_05_LoadStability(t *testing.T) {
 						atomic.AddInt64(&connectionDrops, 1)
 						return
 					}
-					
+
 				case 2:
 					// 发送计量数据
 					err := sendMeterValues(client, clientIndex, operationCount)
@@ -338,9 +336,9 @@ func TestTC_E2E_04_05_LoadStability(t *testing.T) {
 						return
 					}
 				}
-				
+
 				atomic.AddInt64(&successfulOps, 1)
-				
+
 				// 随机延迟
 				time.Sleep(time.Duration(100+operationCount%400) * time.Millisecond)
 			}
@@ -348,21 +346,21 @@ func TestTC_E2E_04_05_LoadStability(t *testing.T) {
 	}
 
 	wg.Wait()
-	
+
 	// 计算结果
 	successRate := float64(successfulOps) / float64(totalOperations) * 100
-	connectionStability := float64(connectionCount-connectionDrops) / float64(connectionCount) * 100
-	
+	connectionStability := float64(int64(connectionCount)-connectionDrops) / float64(connectionCount) * 100
+
 	t.Logf("Load Stability Test Results:")
 	t.Logf("  Total operations: %d", totalOperations)
 	t.Logf("  Successful operations: %d (%.2f%%)", successfulOps, successRate)
 	t.Logf("  Connection drops: %d", connectionDrops)
 	t.Logf("  Connection stability: %.2f%%", connectionStability)
-	
+
 	// 验证稳定性
 	assert.Greater(t, successRate, 90.0, "Success rate should be > 90%")
 	assert.Greater(t, connectionStability, 95.0, "Connection stability should be > 95%")
-	
+
 	t.Log("Load stability test passed")
 }
 
@@ -370,17 +368,17 @@ func TestTC_E2E_04_05_LoadStability(t *testing.T) {
 func sendHeartbeat(wsClient *utils.WebSocketClient, chargePointID string) error {
 	messageID := fmt.Sprintf("heartbeat-%s-%d", chargePointID, time.Now().Unix())
 	payload := map[string]interface{}{}
-	
+
 	message, err := utils.CreateOCPPMessage(2, messageID, "Heartbeat", payload)
 	if err != nil {
 		return err
 	}
-	
+
 	err = wsClient.SendMessage(message)
 	if err != nil {
 		return err
 	}
-	
+
 	_, err = wsClient.ReceiveMessage(3 * time.Second)
 	return err
 }
@@ -394,17 +392,17 @@ func sendStatusNotification(wsClient *utils.WebSocketClient, clientIndex int) er
 		"status":      "Available",
 		"timestamp":   time.Now().Format(time.RFC3339),
 	}
-	
+
 	message, err := utils.CreateOCPPMessage(2, messageID, "StatusNotification", payload)
 	if err != nil {
 		return err
 	}
-	
+
 	err = wsClient.SendMessage(message)
 	if err != nil {
 		return err
 	}
-	
+
 	_, err = wsClient.ReceiveMessage(3 * time.Second)
 	return err
 }
@@ -427,17 +425,17 @@ func sendMeterValues(wsClient *utils.WebSocketClient, clientIndex, sequence int)
 			},
 		},
 	}
-	
+
 	message, err := utils.CreateOCPPMessage(2, messageID, "MeterValues", payload)
 	if err != nil {
 		return err
 	}
-	
+
 	err = wsClient.SendMessage(message)
 	if err != nil {
 		return err
 	}
-	
+
 	_, err = wsClient.ReceiveMessage(3 * time.Second)
 	return err
 }
@@ -473,6 +471,6 @@ func performBootNotification(t *testing.T, wsClient *utils.WebSocketClient, char
 
 	utils.AssertBootNotificationResponse(t, response, messageID)
 	time.Sleep(50 * time.Millisecond) // 减少等待时间
-	
+
 	return nil
 }

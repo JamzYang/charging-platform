@@ -1,19 +1,23 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/charging-platform/charge-point-gateway/internal/config"
+	"github.com/charging-platform/charge-point-gateway/internal/domain/protocol"
 	"github.com/charging-platform/charge-point-gateway/internal/gateway"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
 	"github.com/charging-platform/charge-point-gateway/internal/message"
 	"github.com/charging-platform/charge-point-gateway/internal/metrics"
 	"github.com/charging-platform/charge-point-gateway/internal/protocol/ocpp16"
 	"github.com/charging-platform/charge-point-gateway/internal/storage"
+	"github.com/charging-platform/charge-point-gateway/internal/transport/websocket"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -52,11 +56,11 @@ func main() {
 	log.Info("Kafka producer initialized")
 
 	// 5. 初始化 Kafka 消费者
-	consumer, err := message.NewKafkaConsumer(cfg.Kafka.Brokers, "gateway-group", cfg.Kafka.DownstreamTopic, cfg.PodID, cfg.Kafka.PartitionNum, log)
+	consumer, err := message.NewKafkaConsumer(cfg.Kafka.Brokers, cfg.Kafka.ConsumerGroup, cfg.Kafka.DownstreamTopic, cfg.PodID, cfg.Kafka.PartitionNum, log)
 	if err != nil {
 		log.Fatalf("Failed to initialize Kafka consumer: %v", err)
 	}
-	log.Info("Kafka consumer initialized")
+	log.Infof("Kafka consumer initialized with brokers: %v, group: %s", cfg.Kafka.Brokers, cfg.Kafka.ConsumerGroup)
 
 	// 6. 初始化业务模型转换器
 	converter := gateway.NewUnifiedModelConverter(gateway.DefaultConverterConfig())
@@ -67,22 +71,29 @@ func main() {
 	log.Info("OCPP 1.6 processor initialized")
 
 	// 8. 初始化中央消息分发器
-	dispatcher := gateway.NewDefaultMessageDispatcher(gateway.DefaultDispatcherConfig())
+	dispatcher := gateway.NewDefaultMessageDispatcher(gateway.DefaultDispatcherConfig(), log)
 	// 注册处理器
 	handler := ocpp16.NewProtocolHandler(processor, converter, ocpp16.DefaultProtocolHandlerConfig())
-	if err := dispatcher.RegisterHandler("ocpp1.6", handler); err != nil {
-		log.Fatalf("Failed to register ocpp1.6 handler: %v", err)
+	if err := dispatcher.RegisterHandler(protocol.OCPP_VERSION_1_6, handler); err != nil {
+		log.Fatalf("Failed to register %s handler: %v", protocol.OCPP_VERSION_1_6, err)
 	}
 	log.Info("Dispatcher initialized and handlers registered")
 
-	// 9. 初始化 WebSocket 管理器 (暂时注释)
-	// wsManager := websocket.NewManager(websocket.DefaultConfig())
-	// log.Info("WebSocket manager initialized")
+	// 9. 初始化 WebSocket 管理器 - 按照架构设计传递分发器
+	wsConfig := websocket.DefaultConfig()
+	wsConfig.Host = cfg.Server.Host
+	wsConfig.Port = cfg.Server.Port
+	wsConfig.Path = cfg.Server.WebSocketPath
+	wsManager := websocket.NewManager(wsConfig, dispatcher, log)
+	log.Errorf("MAIN: WebSocket manager initialized with dispatcher")
+	log.Info("WebSocket manager initialized")
 
 	// 10. 定义下行指令处理器
 	commandHandler := func(cmd *message.Command) {
 		log.Infof("Received command for charge point %s: %s", cmd.ChargePointID, cmd.CommandName)
-		// wsManager.SendCommand(cmd.ChargePointID, cmd)
+		if err := wsManager.SendCommand(cmd.ChargePointID, cmd); err != nil {
+			log.Errorf("Failed to send command to %s: %v", cmd.ChargePointID, err)
+		}
 	}
 	log.Info("Command handler defined")
 
@@ -90,7 +101,7 @@ func main() {
 	// 启动监控服务器
 	metrics.RegisterMetrics()
 	go startMetricsServer(cfg.GetMetricsAddr(), log)
-	log.Info("Metrics server starting...")
+	log.Infof("Metrics server starting on %s...", cfg.GetMetricsAddr())
 
 	// 启动 Kafka 消费者
 	go func() {
@@ -100,13 +111,47 @@ func main() {
 	}()
 	log.Info("Kafka consumer starting...")
 
-	// 启动 WebSocket 管理器 (暂时注释)
-	// go func() {
-	// 	if err := wsManager.Start(); err != nil {
-	// 		log.Errorf("WebSocket manager failed: %v", err)
-	// 	}
-	// }()
-	// log.Info("WebSocket manager starting...")
+	// 启动消息分发器
+	log.Errorf("MAIN: About to start message dispatcher")
+	if err := dispatcher.Start(); err != nil {
+		log.Fatalf("Failed to start message dispatcher: %v", err)
+	}
+	log.Errorf("MAIN: Message dispatcher started successfully")
+
+	// 验证处理器注册
+	versions := dispatcher.GetRegisteredVersions()
+	log.Errorf("MAIN: Registered protocol versions: %v", versions)
+
+	// 启动 WebSocket 管理器
+	go func() {
+		if err := wsManager.Start(); err != nil {
+			log.Errorf("WebSocket manager failed: %v", err)
+		}
+	}()
+	log.Info("WebSocket manager starting...")
+
+	// 启动WebSocket事件处理器
+	go func() {
+		log.Errorf("MAIN: WebSocket event handler started")
+		for event := range wsManager.GetEventChannel() {
+			log.Errorf("MAIN: Received event type: %s from %s", event.Type, event.ChargePointID)
+			switch event.Type {
+			case websocket.EventTypeConnected:
+				log.Infof("Charge point %s connected", event.ChargePointID)
+				// 可以在这里添加连接事件处理逻辑
+			case websocket.EventTypeDisconnected:
+				log.Infof("Charge point %s disconnected", event.ChargePointID)
+				// 可以在这里添加断开连接事件处理逻辑
+			case websocket.EventTypeMessage:
+				// 消息处理已移至 websocket.ConnectionWrapper.handleMessage
+				// 此处仅记录事件，用于监控和调试
+				log.Debugf("Message event received from %s (size: %d)", event.ChargePointID, len(event.Message))
+			case websocket.EventTypeError:
+				log.Errorf("WebSocket error for %s: %v", event.ChargePointID, event.Error)
+			}
+		}
+	}()
+	log.Info("WebSocket event handler started")
 
 	log.Info("Charge Point Gateway started successfully")
 
@@ -117,14 +162,14 @@ func main() {
 	log.Info("Shutting down server...")
 
 	// 按顺序执行清理操作
-	// ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	// defer cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	// 1. 关闭 WebSocket 服务器 (暂时注释)
-	// if err := wsManager.Shutdown(ctx); err != nil {
-	// 	log.Errorf("Error shutting down WebSocket manager: %v", err)
-	// }
-	// log.Info("WebSocket manager shut down")
+	// 1. 关闭 WebSocket 服务器
+	if err := wsManager.Shutdown(ctx); err != nil {
+		log.Errorf("Error shutting down WebSocket manager: %v", err)
+	}
+	log.Info("WebSocket manager shut down")
 
 	// 2. 关闭 Kafka 消费者
 	if err := consumer.Close(); err != nil {

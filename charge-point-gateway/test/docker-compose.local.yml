@@ -1,0 +1,110 @@
+# Docker Compose for Local Development
+# 用于本地开发时启动依赖服务，应用程序在本地运行
+version: '3.8'
+
+services:
+  # Redis服务 - 本地开发
+  redis-local:
+    image: redis:7-alpine
+    container_name: redis-local
+    ports:
+      - "6380:6379"  # 映射到本地6380端口，避免与本地Redis冲突
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-local-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - local-network
+
+  # Zookeeper服务（Kafka依赖）- 本地开发
+  zookeeper-local:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: zookeeper-local
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2183:2181"  # 映射到本地2183端口
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - local-network
+
+  # Kafka服务 - 本地开发
+  kafka-local:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: kafka-local
+    depends_on:
+      zookeeper-local:
+        condition: service_healthy
+    ports:
+      - "9093:9092"  # 映射到本地9093端口
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper-local:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9093
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 1
+      KAFKA_LOG_SEGMENT_BYTES: 1048576
+      KAFKA_PROCESS_ROLES: ""
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+    networks:
+      - local-network
+
+  # Kafka管理工具（可选，用于调试）
+  kafka-ui-local:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui-local
+    depends_on:
+      - kafka-local
+    ports:
+      - "8085:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka-local:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper-local:2181
+    networks:
+      - local-network
+    profiles:
+      - debug
+
+  # Redis管理工具（可选，用于调试）
+  redis-commander-local:
+    image: rediscommander/redis-commander:latest
+    container_name: redis-commander-local
+    depends_on:
+      - redis-local
+    ports:
+      - "8086:8081"
+    environment:
+      REDIS_HOSTS: "local:redis-local:6379"
+    networks:
+      - local-network
+    profiles:
+      - debug
+
+volumes:
+  redis-local-data:
+    driver: local
+
+networks:
+  local-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.26.0.0/16

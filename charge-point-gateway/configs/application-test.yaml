@@ -1,0 +1,54 @@
+# Charge Point Gateway - Test Environment Configuration
+# 测试环境配置，用于Docker Compose测试环境
+
+# 应用信息
+app:
+  profile: "test"
+
+# 服务器配置 - 测试环境
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+# Redis配置 - Docker测试环境
+redis:
+  addr: "redis-test:6379"
+  password: ""
+  db: 0
+  pool_size: 50
+  min_idle_conns: 5
+
+# Kafka配置 - Docker测试环境
+kafka:
+  brokers:
+    - "kafka-test:9092"
+  consumer_group: "gateway-test-consumer"
+  upstream_topic: "ocpp-events-up-test"
+  downstream_topic: "commands-down-test"
+
+# 日志配置 - 测试环境
+log:
+  level: "debug"
+  format: "json"  # 测试环境使用JSON格式便于日志收集
+  output: "stdout"
+
+# 监控配置 - 测试环境
+monitoring:
+  metrics_addr: ":9090"
+  health_check_port: 8081
+  pprof_enabled: false
+
+# 缓存配置 - 测试环境
+cache:
+  max_size: 5000
+  ttl: "1h"
+  cleanup_interval: "10m"
+  memory_limit_mb: 256
+
+# OCPP配置 - 测试环境较短超时
+ocpp:
+  supported_versions:
+    - "1.6"
+  heartbeat_interval: "60s"  # 测试环境较短心跳间隔
+  connection_timeout: "30s"
+  message_timeout: "15s"

@@ -11,13 +11,13 @@ import (
 
 // LRUCache LRU缓存实现
 type LRUCache struct {
-	shards   []*CacheShard
-	config   *CacheConfig
-	stats    *CacheStats
-	running  int32
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
-	
+	shards  []*CacheShard
+	config  *CacheConfig
+	stats   *CacheStats
+	running int32
+	stopCh  chan struct{}
+	wg      sync.WaitGroup
+
 	// 全局统计
 	globalStats struct {
 		hits        int64
@@ -35,7 +35,7 @@ func NewLRUCache(config *CacheConfig) *LRUCache {
 	if config == nil {
 		config = DefaultCacheConfig()
 	}
-	
+
 	cache := &LRUCache{
 		shards: make([]*CacheShard, config.ShardCount),
 		config: config,
@@ -46,12 +46,12 @@ func NewLRUCache(config *CacheConfig) *LRUCache {
 		},
 		stopCh: make(chan struct{}),
 	}
-	
+
 	// 初始化分片
 	for i := 0; i < config.ShardCount; i++ {
 		cache.shards[i] = NewCacheShard(config)
 	}
-	
+
 	return cache
 }
 
@@ -72,14 +72,14 @@ func (c *LRUCache) Get(key string) (interface{}, bool) {
 			c.updateAvgGetTime(time.Since(start))
 		}
 	}()
-	
+
 	shard := c.getShard(key)
 	value, exists := shard.Get(key)
 	if !exists {
 		atomic.AddInt64(&c.globalStats.misses, 1)
 		return nil, false
 	}
-	
+
 	atomic.AddInt64(&c.globalStats.hits, 1)
 	return value, true
 }
@@ -93,7 +93,7 @@ func (c *LRUCache) Set(key string, value interface{}, ttl time.Duration) error {
 			c.updateAvgSetTime(time.Since(start))
 		}
 	}()
-	
+
 	shard := c.getShard(key)
 	err := shard.Add(key, value, ttl)
 	if err != nil {
@@ -116,7 +116,7 @@ func (c *LRUCache) Delete(key string) bool {
 	defer func() {
 		atomic.AddInt64(&c.globalStats.deletes, 1)
 	}()
-	
+
 	shard := c.getShard(key)
 	return shard.Remove(key)
 }
@@ -129,7 +129,7 @@ func (c *LRUCache) Clear() error {
 		shard.lruList = NewLRUList()
 		shard.mutex.Unlock()
 	}
-	
+
 	// 重置统计
 	atomic.StoreInt64(&c.globalStats.hits, 0)
 	atomic.StoreInt64(&c.globalStats.misses, 0)
@@ -138,20 +138,20 @@ func (c *LRUCache) Clear() error {
 	atomic.StoreInt64(&c.globalStats.deletes, 0)
 	atomic.StoreInt64(&c.globalStats.evictions, 0)
 	atomic.StoreInt64(&c.globalStats.expirations, 0)
-	
+
 	return nil
 }
 
 // GetBatch 批量获取
 func (c *LRUCache) GetBatch(keys []string) map[string]interface{} {
 	result := make(map[string]interface{})
-	
+
 	for _, key := range keys {
 		if value, exists := c.Get(key); exists {
 			result[key] = value
 		}
 	}
-	
+
 	return result
 }
 
@@ -162,12 +162,12 @@ func (c *LRUCache) SetBatch(items map[string]CacheItem) error {
 		if ttl < 0 {
 			ttl = c.config.DefaultTTL
 		}
-		
+
 		if err := c.Set(key, item.Value, ttl); err != nil {
 			return fmt.Errorf("failed to set key %s: %w", key, err)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -191,7 +191,7 @@ func (c *LRUCache) Exists(key string) bool {
 // Keys 获取所有key
 func (c *LRUCache) Keys() []string {
 	var keys []string
-	
+
 	for _, shard := range c.shards {
 		shard.mutex.RLock()
 		for key := range shard.items {
@@ -199,7 +199,7 @@ func (c *LRUCache) Keys() []string {
 		}
 		shard.mutex.RUnlock()
 	}
-	
+
 	return keys
 }
 
@@ -233,13 +233,13 @@ func (c *LRUCache) GetStats() *CacheStats {
 		AvgGetTime:    c.stats.AvgGetTime,
 		AvgSetTime:    c.stats.AvgSetTime,
 	}
-	
+
 	// 计算命中率
 	totalRequests := stats.Hits + stats.Misses
 	if totalRequests > 0 {
 		stats.HitRate = float64(stats.Hits) / float64(totalRequests)
 	}
-	
+
 	return stats
 }
 
@@ -262,23 +262,37 @@ func (c *LRUCache) GetMemoryUsage() int64 {
 func (c *LRUCache) EvictLRU(count int) int {
 	evicted := 0
 
-	// 计算每个分片需要淘汰的数量
-	shardEvictCount := count / len(c.shards)
-	if shardEvictCount == 0 {
-		shardEvictCount = 1 // 至少淘汰一个
-	}
+	for i := 0; i < count; i++ {
+		var oldestNode *LRUNode
+		var oldestShard *CacheShard
 
-	for _, shard := range c.shards {
-		shard.mutex.Lock()
-		for i := 0; i < shardEvictCount && shard.lruList.Size() > 0; i++ {
-			node := shard.lruList.RemoveTail()
-			if node != nil {
-				delete(shard.items, node.Key)
+		// 找到最旧的节点
+		for _, shard := range c.shards {
+			shard.mutex.RLock()
+			if shard.lruList.tail != nil {
+				if oldestNode == nil || shard.lruList.tail.Item.AccessAt.Before(oldestNode.Item.AccessAt) {
+					oldestNode = shard.lruList.tail
+					oldestShard = shard
+				}
+			}
+			shard.mutex.RUnlock()
+		}
+
+		// 驱逐最旧的节点
+		if oldestShard != nil {
+			oldestShard.mutex.Lock()
+			// Re-check condition after acquiring write lock
+			if oldestShard.lruList.tail != nil && oldestShard.lruList.tail == oldestNode {
+				oldestShard.lruList.RemoveTail()
+				delete(oldestShard.items, oldestNode.Key)
 				evicted++
 				atomic.AddInt64(&c.globalStats.evictions, 1)
 			}
+			oldestShard.mutex.Unlock()
+		} else {
+			// No items to evict
+			break
 		}
-		shard.mutex.Unlock()
 	}
 
 	return evicted

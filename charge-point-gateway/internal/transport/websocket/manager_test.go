@@ -8,13 +8,62 @@ import (
 	"time"
 
 	"github.com/charging-platform/charge-point-gateway/internal/domain/connection"
+	"github.com/charging-platform/charge-point-gateway/internal/domain/events"
+	"github.com/charging-platform/charge-point-gateway/internal/gateway"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
+// MockDispatcher 模拟分发器用于测试
+type MockDispatcher struct{}
+
+func (m *MockDispatcher) DispatchMessage(ctx context.Context, chargePointID string, protocolVersion string, message []byte) (interface{}, error) {
+	return map[string]interface{}{"status": "Accepted"}, nil
+}
+
+func (m *MockDispatcher) RegisterHandler(version string, handler gateway.ProtocolHandler) error {
+	return nil
+}
+
+func (m *MockDispatcher) GetHandlerForVersion(version string) (gateway.ProtocolHandler, bool) {
+	return nil, false
+}
+
+func (m *MockDispatcher) UnregisterHandler(version string) error {
+	return nil
+}
+
+func (m *MockDispatcher) GetRegisteredVersions() []string {
+	return []string{"ocpp1.6"}
+}
+
+func (m *MockDispatcher) Start() error {
+	return nil
+}
+
+func (m *MockDispatcher) Stop() error {
+	return nil
+}
+
+func (m *MockDispatcher) IdentifyProtocolVersion(chargePointID string, message []byte) (string, error) {
+	return "ocpp1.6", nil
+}
+
+func (m *MockDispatcher) GetEventChannel() <-chan events.Event {
+	return make(chan events.Event)
+}
+
+func (m *MockDispatcher) GetStats() gateway.DispatcherStats {
+	return gateway.DispatcherStats{}
+}
+
+func newMockDispatcher() gateway.MessageDispatcher {
+	return &MockDispatcher{}
+}
+
 func TestDefaultConfig(t *testing.T) {
 	config := DefaultConfig()
-	
+
 	assert.Equal(t, "0.0.0.0", config.Host)
 	assert.Equal(t, 8080, config.Port)
 	assert.Equal(t, "/ocpp", config.Path)
@@ -29,10 +78,12 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestNewManager(t *testing.T) {
 	config := DefaultConfig()
-	manager := NewManager(config)
-	
+	dispatcher := newMockDispatcher()
+	manager := NewManager(config, dispatcher, nil)
+
 	assert.NotNil(t, manager)
 	assert.Equal(t, config, manager.config)
+	assert.Equal(t, dispatcher, manager.dispatcher)
 	assert.NotNil(t, manager.upgrader)
 	assert.NotNil(t, manager.connections)
 	assert.NotNil(t, manager.eventChan)
@@ -41,47 +92,50 @@ func TestNewManager(t *testing.T) {
 }
 
 func TestNewManagerWithNilConfig(t *testing.T) {
-	manager := NewManager(nil)
-	
+	dispatcher := newMockDispatcher()
+	manager := NewManager(nil, dispatcher, nil)
+
 	assert.NotNil(t, manager)
 	assert.NotNil(t, manager.config)
 	assert.Equal(t, DefaultConfig().Host, manager.config.Host)
 }
 
 func TestManager_StartStop(t *testing.T) {
-	manager := NewManager(DefaultConfig())
-	
+	dispatcher := newMockDispatcher()
+	manager := NewManager(DefaultConfig(), dispatcher, nil)
+
 	// 测试启动
 	err := manager.Start()
 	assert.NoError(t, err)
-	
+
 	// 测试停止
 	err = manager.Stop()
 	assert.NoError(t, err)
-	
+
 	// 验证连接已清空
 	assert.Equal(t, 0, manager.GetConnectionCount())
 }
 
 func TestManager_ConnectionManagement(t *testing.T) {
-	manager := NewManager(DefaultConfig())
+	dispatcher := newMockDispatcher()
+	manager := NewManager(DefaultConfig(), dispatcher, nil)
 	err := manager.Start()
 	require.NoError(t, err)
 	defer manager.Stop()
-	
+
 	chargePointID := "CP001"
-	
+
 	// 测试初始状态
 	assert.False(t, manager.HasConnection(chargePointID))
 	assert.Equal(t, 0, manager.GetConnectionCount())
-	
+
 	// 模拟连接（这里我们直接操作内部状态进行测试）
 	// 在实际使用中，连接会通过HandleConnection方法建立
-	
+
 	// 测试获取不存在的连接
 	_, exists := manager.GetConnection(chargePointID)
 	assert.False(t, exists)
-	
+
 	// 测试获取所有连接
 	connections := manager.GetAllConnections()
 	assert.Empty(t, connections)
@@ -90,12 +144,13 @@ func TestManager_ConnectionManagement(t *testing.T) {
 func TestManager_HandleConnection_TooManyConnections(t *testing.T) {
 	config := DefaultConfig()
 	config.MaxConnections = 0 // 设置为0以测试连接限制
-	manager := NewManager(config)
-	
+	dispatcher := newMockDispatcher()
+	manager := NewManager(config, dispatcher, nil)
+
 	err := manager.Start()
 	require.NoError(t, err)
 	defer manager.Stop()
-	
+
 	// 创建测试服务器
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		err := manager.HandleConnection(w, r, "CP001")
@@ -103,21 +158,22 @@ func TestManager_HandleConnection_TooManyConnections(t *testing.T) {
 		assert.Contains(t, err.Error(), "connection limit exceeded")
 	}))
 	defer server.Close()
-	
+
 	// 发送请求
 	resp, err := http.Get(server.URL)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	
+
 	assert.Equal(t, http.StatusTooManyRequests, resp.StatusCode)
 }
 
 func TestManager_SendMessage_ConnectionNotFound(t *testing.T) {
-	manager := NewManager(DefaultConfig())
+	dispatcher := newMockDispatcher()
+	manager := NewManager(DefaultConfig(), dispatcher, nil)
 	err := manager.Start()
 	require.NoError(t, err)
 	defer manager.Stop()
-	
+
 	err = manager.SendMessage("nonexistent", []byte("test"))
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "connection not found")
@@ -125,12 +181,12 @@ func TestManager_SendMessage_ConnectionNotFound(t *testing.T) {
 
 func TestConnectionWrapper_SendMessage(t *testing.T) {
 	config := DefaultConfig()
-	
+
 	// 创建模拟的WebSocket连接
 	// 注意：这里我们创建一个最小的测试，实际的WebSocket测试需要更复杂的设置
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	wrapper := &ConnectionWrapper{
 		chargePointID: "CP001",
 		sendChan:      make(chan []byte, 10),
@@ -139,12 +195,12 @@ func TestConnectionWrapper_SendMessage(t *testing.T) {
 		lastActivity:  time.Now(),
 		config:        config,
 	}
-	
+
 	// 测试发送消息
 	message := []byte("test message")
 	err := wrapper.SendMessage(message)
 	assert.NoError(t, err)
-	
+
 	// 验证消息在通道中
 	select {
 	case receivedMessage := <-wrapper.sendChan:
@@ -158,7 +214,7 @@ func TestConnectionWrapper_SendMessage_ChannelFull(t *testing.T) {
 	config := DefaultConfig()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	
+
 	wrapper := &ConnectionWrapper{
 		chargePointID: "CP001",
 		sendChan:      make(chan []byte, 1), // 容量为1的通道
@@ -166,11 +222,11 @@ func TestConnectionWrapper_SendMessage_ChannelFull(t *testing.T) {
 		cancel:        cancel,
 		config:        config,
 	}
-	
+
 	// 填满通道
 	err := wrapper.SendMessage([]byte("message1"))
 	assert.NoError(t, err)
-	
+
 	// 再次发送应该失败
 	err = wrapper.SendMessage([]byte("message2"))
 	assert.Error(t, err)
@@ -223,7 +279,7 @@ func TestConnectionWrapper_GetLastActivity(t *testing.T) {
 	wrapper := &ConnectionWrapper{
 		lastActivity: time.Now(),
 	}
-	
+
 	activity := wrapper.GetLastActivity()
 	assert.WithinDuration(t, time.Now(), activity, time.Second)
 }
@@ -259,7 +315,7 @@ func TestConnectionEvent(t *testing.T) {
 		ChargePointID: "CP001",
 		Timestamp:     time.Now(),
 	}
-	
+
 	assert.Equal(t, EventTypeConnected, event.Type)
 	assert.Equal(t, "CP001", event.ChargePointID)
 	assert.WithinDuration(t, time.Now(), event.Timestamp, time.Second)
@@ -274,29 +330,29 @@ func TestConnectionEventTypes(t *testing.T) {
 		EventTypePing,
 		EventTypePong,
 	}
-	
+
 	for _, eventType := range eventTypes {
 		assert.NotEmpty(t, string(eventType))
 	}
 }
 
 func TestManager_BroadcastMessage(t *testing.T) {
-	manager := NewManager(DefaultConfig())
+	manager := NewManager(DefaultConfig(), newMockDispatcher(), nil)
 	err := manager.Start()
 	require.NoError(t, err)
 	defer manager.Stop()
-	
+
 	// 测试空连接列表的广播
 	manager.BroadcastMessage([]byte("test message"))
 	// 应该不会panic或出错
 }
 
 func TestManager_GetEventChannel(t *testing.T) {
-	manager := NewManager(DefaultConfig())
-	
+	manager := NewManager(DefaultConfig(), newMockDispatcher(), nil)
+
 	eventChan := manager.GetEventChannel()
 	assert.NotNil(t, eventChan)
-	
+
 	// 测试通道类型
 	assert.IsType(t, (<-chan ConnectionEvent)(nil), eventChan)
 }
@@ -304,12 +360,12 @@ func TestManager_GetEventChannel(t *testing.T) {
 func TestManager_CleanupIdleConnections(t *testing.T) {
 	config := DefaultConfig()
 	config.IdleTimeout = 100 * time.Millisecond // 设置很短的超时时间
-	
-	manager := NewManager(config)
+
+	manager := NewManager(config, newMockDispatcher(), nil)
 	err := manager.Start()
 	require.NoError(t, err)
 	defer manager.Stop()
-	
+
 	// 直接调用清理方法进行测试
 	manager.cleanupIdleConnections()
 	// 应该不会panic
@@ -321,21 +377,21 @@ func TestUpgraderConfiguration(t *testing.T) {
 	config := DefaultConfig()
 	config.CheckOrigin = true
 	config.AllowedOrigins = []string{"http://example.com"}
-	
-	manager := NewManager(config)
-	
+
+	manager := NewManager(config, newMockDispatcher(), nil)
+
 	// 验证upgrader配置
 	assert.Equal(t, config.ReadBufferSize, manager.upgrader.ReadBufferSize)
 	assert.Equal(t, config.WriteBufferSize, manager.upgrader.WriteBufferSize)
 	assert.Equal(t, config.HandshakeTimeout, manager.upgrader.HandshakeTimeout)
 	assert.Equal(t, config.EnableCompression, manager.upgrader.EnableCompression)
 	assert.Equal(t, config.Subprotocols, manager.upgrader.Subprotocols)
-	
+
 	// 测试CheckOrigin函数
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Origin", "http://example.com")
 	assert.True(t, manager.upgrader.CheckOrigin(req))
-	
+
 	req.Header.Set("Origin", "http://malicious.com")
 	assert.False(t, manager.upgrader.CheckOrigin(req))
 }
@@ -343,9 +399,9 @@ func TestUpgraderConfiguration(t *testing.T) {
 func TestUpgraderCheckOriginDisabled(t *testing.T) {
 	config := DefaultConfig()
 	config.CheckOrigin = false
-	
-	manager := NewManager(config)
-	
+
+	manager := NewManager(config, newMockDispatcher(), nil)
+
 	// 当CheckOrigin禁用时，应该允许所有来源
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Origin", "http://any-origin.com")
@@ -356,9 +412,9 @@ func TestUpgraderCheckOriginEmptyAllowedList(t *testing.T) {
 	config := DefaultConfig()
 	config.CheckOrigin = true
 	config.AllowedOrigins = []string{} // 空的允许列表
-	
-	manager := NewManager(config)
-	
+
+	manager := NewManager(config, newMockDispatcher(), nil)
+
 	// 当允许列表为空时，应该允许所有来源
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Origin", "http://any-origin.com")

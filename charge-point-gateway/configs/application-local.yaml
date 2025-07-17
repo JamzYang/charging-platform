@@ -1,0 +1,54 @@
+# Charge Point Gateway - Local Test Environment Configuration
+# 本地测试环境配置，用于在Windows本地运行测试时连接Docker服务
+
+# 应用信息
+app:
+  profile: "local"
+
+# 服务器配置 - 本地测试环境
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+# Redis配置 - 本地测试环境（连接Docker端口映射）
+redis:
+  addr: "localhost:6380"  # 映射到本地6380端口
+  password: ""
+  db: 0
+  pool_size: 50
+  min_idle_conns: 5
+
+# Kafka配置 - 本地测试环境（连接Docker端口映射）
+kafka:
+  brokers:
+    - "localhost:9093"  # 映射到本地9093端口
+  consumer_group: "gateway-local-consumer"
+  upstream_topic: "ocpp-events-up-local"
+  downstream_topic: "commands-down-local"
+
+# 日志配置 - 本地测试环境
+log:
+  level: "debug"
+  format: "console"
+  output: "stdout"
+
+# 监控配置 - 本地测试环境
+monitoring:
+  metrics_addr: ":9090"
+  health_check_port: 8081
+  pprof_enabled: true
+
+# 缓存配置 - 本地测试环境
+cache:
+  max_size: 1000
+  ttl: "30m"
+  cleanup_interval: "5m"
+  memory_limit_mb: 128
+
+# OCPP配置 - 本地测试环境
+ocpp:
+  supported_versions:
+    - "1.6"
+  heartbeat_interval: "60s"
+  connection_timeout: "30s"
+  message_timeout: "15s"

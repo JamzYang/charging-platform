@@ -93,7 +93,7 @@ func AssertOCPPCallError(t *testing.T, data []byte, expectedMessageID string) (s
 func AssertRedisConnection(t *testing.T, redisClient *redis.Client, chargePointID, expectedPodID string) {
 	ctx := context.Background()
 	key := fmt.Sprintf("conn:%s", chargePointID)
-	
+
 	result, err := redisClient.Get(ctx, key).Result()
 	require.NoError(t, err, "Failed to get connection mapping from Redis")
 	assert.Equal(t, expectedPodID, result, "Pod ID mismatch in Redis")
@@ -103,7 +103,7 @@ func AssertRedisConnection(t *testing.T, redisClient *redis.Client, chargePointI
 func AssertRedisConnectionNotExists(t *testing.T, redisClient *redis.Client, chargePointID string) {
 	ctx := context.Background()
 	key := fmt.Sprintf("conn:%s", chargePointID)
-	
+
 	_, err := redisClient.Get(ctx, key).Result()
 	assert.Equal(t, redis.Nil, err, "Connection mapping should not exist in Redis")
 }
@@ -131,32 +131,32 @@ func AssertKafkaMessage(t *testing.T, message []byte, expectedEventType string) 
 func AssertEventuallyTrue(t *testing.T, condition func() bool, timeout time.Duration, message string) {
 	deadline := time.Now().Add(timeout)
 	interval := timeout / 20 // 检查20次
-	
+
 	for time.Now().Before(deadline) {
 		if condition() {
 			return
 		}
 		time.Sleep(interval)
 	}
-	
+
 	t.Fatalf("Condition not met within timeout: %s", message)
 }
 
 // AssertBootNotificationResponse 断言BootNotification响应
 func AssertBootNotificationResponse(t *testing.T, data []byte, messageID string) {
 	payload := AssertOCPPCallResult(t, data, messageID)
-	
+
 	// 检查状态
 	status, ok := payload["status"].(string)
 	require.True(t, ok, "Status should be a string")
 	assert.Equal(t, "Accepted", status, "BootNotification should be accepted")
-	
+
 	// 检查心跳间隔
 	assert.Contains(t, payload, "interval", "Response should contain heartbeat interval")
 	interval, ok := payload["interval"].(float64)
 	require.True(t, ok, "Interval should be a number")
 	assert.Greater(t, interval, float64(0), "Heartbeat interval should be positive")
-	
+
 	// 检查当前时间
 	assert.Contains(t, payload, "currentTime", "Response should contain current time")
 }
@@ -164,7 +164,7 @@ func AssertBootNotificationResponse(t *testing.T, data []byte, messageID string)
 // AssertMeterValuesResponse 断言MeterValues响应
 func AssertMeterValuesResponse(t *testing.T, data []byte, messageID string) {
 	payload := AssertOCPPCallResult(t, data, messageID)
-	
+
 	// MeterValues响应通常是空的
 	assert.Empty(t, payload, "MeterValues response should be empty")
 }
@@ -172,7 +172,7 @@ func AssertMeterValuesResponse(t *testing.T, data []byte, messageID string) {
 // AssertStatusNotificationResponse 断言StatusNotification响应
 func AssertStatusNotificationResponse(t *testing.T, data []byte, messageID string) {
 	payload := AssertOCPPCallResult(t, data, messageID)
-	
+
 	// StatusNotification响应通常是空的
 	assert.Empty(t, payload, "StatusNotification response should be empty")
 }
@@ -187,33 +187,33 @@ func AssertRemoteStartTransactionRequest(t *testing.T, data []byte) (string, map
 	// 检查消息类型和Action
 	messageType := int(message[0].(float64))
 	assert.Equal(t, 2, messageType, "Should be CALL message")
-	
+
 	action := message[2].(string)
 	assert.Equal(t, "RemoteStartTransaction", action, "Action should be RemoteStartTransaction")
-	
+
 	messageID := message[1].(string)
 	payload := message[3].(map[string]interface{})
-	
+
 	// 检查必要字段
 	assert.Contains(t, payload, "idTag", "Payload should contain idTag")
-	
+
 	return messageID, payload
 }
 
 // AssertDeviceOnlineEvent 断言设备上线事件
 func AssertDeviceOnlineEvent(t *testing.T, message []byte, expectedChargePointID string) {
 	event := AssertKafkaMessage(t, message, "device.online")
-	
+
 	// 检查充电桩ID
 	chargePointID, ok := event["charge_point_id"].(string)
 	require.True(t, ok, "Charge point ID should be a string")
 	assert.Equal(t, expectedChargePointID, chargePointID, "Charge point ID mismatch")
-	
+
 	// 检查载荷
 	assert.Contains(t, event, "payload", "Event should have payload")
 	payload, ok := event["payload"].(map[string]interface{})
 	require.True(t, ok, "Payload should be an object")
-	
+
 	// 检查设备信息
 	assert.Contains(t, payload, "vendor", "Payload should contain vendor")
 	assert.Contains(t, payload, "model", "Payload should contain model")
@@ -222,18 +222,42 @@ func AssertDeviceOnlineEvent(t *testing.T, message []byte, expectedChargePointID
 // AssertMeterValuesEvent 断言计量数据事件
 func AssertMeterValuesEvent(t *testing.T, message []byte, expectedChargePointID string) {
 	event := AssertKafkaMessage(t, message, "meter.values")
-	
+
 	// 检查充电桩ID
 	chargePointID, ok := event["charge_point_id"].(string)
 	require.True(t, ok, "Charge point ID should be a string")
 	assert.Equal(t, expectedChargePointID, chargePointID, "Charge point ID mismatch")
-	
+
 	// 检查载荷
 	assert.Contains(t, event, "payload", "Event should have payload")
 	payload, ok := event["payload"].(map[string]interface{})
 	require.True(t, ok, "Payload should be an object")
-	
+
 	// 检查计量数据
 	assert.Contains(t, payload, "connector_id", "Payload should contain connector ID")
 	assert.Contains(t, payload, "meter_values", "Payload should contain meter values")
+}
+
+// ReceiveMessageWithTimeout 尝试在给定的超时时间内接收一条消息
+func ReceiveMessageWithTimeout(wsClient *WebSocketClient, timeout time.Duration) ([]byte, error) {
+	resultChan := make(chan struct {
+		response []byte
+		err      error
+	}, 1)
+
+	go func() {
+		// 使用一个稍长的内部超时以确保select先超时
+		response, err := wsClient.ReceiveMessage(timeout + 50*time.Millisecond)
+		resultChan <- struct {
+			response []byte
+			err      error
+		}{response, err}
+	}()
+
+	select {
+	case result := <-resultChan:
+		return result.response, result.err
+	case <-time.After(timeout):
+		return nil, fmt.Errorf("timed out after %v waiting for message", timeout)
+	}
 }

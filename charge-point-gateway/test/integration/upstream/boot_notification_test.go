@@ -24,6 +24,7 @@ func TestTC_INT_01_BootNotification(t *testing.T) {
 	podID := "test-pod-1"
 
 	// 创建Kafka消费者来监听上行事件
+	t.Logf("Creating partition consumer for topic: ocpp-events-up-test")
 	partitionConsumer, err := env.KafkaConsumer.ConsumePartition("ocpp-events-up-test", 0, sarama.OffsetNewest)
 	require.NoError(t, err)
 	defer partitionConsumer.Close()
@@ -142,7 +143,7 @@ func TestTC_INT_01_BootNotification_Concurrent(t *testing.T) {
 	for i := 0; i < concurrentCount; i++ {
 		go func(index int) {
 			chargePointID := fmt.Sprintf("CP-%03d", index)
-			
+
 			// 创建WebSocket客户端
 			wsClient, err := utils.NewWebSocketClient(env.GatewayURL, chargePointID)
 			if err != nil {

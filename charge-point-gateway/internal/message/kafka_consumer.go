@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"hash/fnv"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -107,18 +106,7 @@ func (c *KafkaConsumer) Cleanup(sarama.ConsumerGroupSession) error {
 
 // ConsumeClaim 是核心消费逻辑
 func (c *KafkaConsumer) ConsumeClaim(session sarama.ConsumerGroupSession, claim sarama.ConsumerGroupClaim) error {
-	// 计算当前 Pod 应该消费哪个分区
-	hasher := fnv.New32a()
-	hasher.Write([]byte(c.podID))
-	myPartition := int32(hasher.Sum32() % uint32(c.partitionNum))
-
-	// 如果当前 claim 的分区不是我该消费的，则直接返回
-	if claim.Partition() != myPartition {
-		c.logger.Debugf("Skipping partition %d, expected %d for pod %s", claim.Partition(), myPartition, c.podID)
-		return nil
-	}
-
-	c.logger.Infof("Consuming messages from partition %d for pod %s", claim.Partition(), c.podID)
+	c.logger.Infof("Pod %s consuming messages from partition %d", c.podID, claim.Partition())
 
 	for message := range claim.Messages() {
 		// 总是标记消息，即使处理失败，以避免重复消费

@@ -95,27 +95,27 @@ func TestTC_INT_02_MeterValues_MultipleValues(t *testing.T) {
 
 	// 创建包含多个计量值的MeterValues消息
 	payload := map[string]interface{}{
-		"connectorId": 1,
+		"connectorId":   1,
 		"transactionId": 12345,
 		"meterValue": []map[string]interface{}{
 			{
 				"timestamp": "2024-01-14T10:00:00Z",
 				"sampledValue": []map[string]interface{}{
 					{
-						"value": "1234.56",
+						"value":     "1234.56",
 						"measurand": "Energy.Active.Import.Register",
-						"unit": "kWh",
+						"unit":      "kWh",
 					},
 					{
-						"value": "7200",
+						"value":     "7200",
 						"measurand": "Power.Active.Import",
-						"unit": "W",
+						"unit":      "W",
 					},
 					{
-						"value": "230.5",
+						"value":     "230.5",
 						"measurand": "Voltage",
-						"phase": "L1",
-						"unit": "V",
+						"phase":     "L1",
+						"unit":      "V",
 					},
 				},
 			},
@@ -123,9 +123,9 @@ func TestTC_INT_02_MeterValues_MultipleValues(t *testing.T) {
 				"timestamp": "2024-01-14T10:01:00Z",
 				"sampledValue": []map[string]interface{}{
 					{
-						"value": "1235.12",
+						"value":     "1235.12",
 						"measurand": "Energy.Active.Import.Register",
-						"unit": "kWh",
+						"unit":      "kWh",
 					},
 				},
 			},
@@ -182,16 +182,16 @@ func TestTC_INT_02_MeterValues_HighFrequency(t *testing.T) {
 
 	for i := 0; i < messageCount; i++ {
 		payload := map[string]interface{}{
-			"connectorId": 1,
+			"connectorId":   1,
 			"transactionId": 12345,
 			"meterValue": []map[string]interface{}{
 				{
 					"timestamp": time.Now().Format(time.RFC3339),
 					"sampledValue": []map[string]interface{}{
 						{
-							"value": "1234.56",
+							"value":     "1234.56",
 							"measurand": "Energy.Active.Import.Register",
-							"unit": "kWh",
+							"unit":      "kWh",
 						},
 					},
 				},
@@ -206,13 +206,13 @@ func TestTC_INT_02_MeterValues_HighFrequency(t *testing.T) {
 		err = wsClient.SendMessage(meterMessage)
 		require.NoError(t, err)
 
-		// 尝试接收响应（非阻塞）
-		select {
-		case response := <-wsClient.ReceiveMessage(1 * time.Second):
+		// 尝试接收响应
+		response, err := wsClient.ReceiveMessage(1 * time.Second)
+		if err != nil {
+			t.Logf("Timeout waiting for response to message %d: %v", i, err)
+		} else {
 			utils.AssertMeterValuesResponse(t, response, messageID)
 			successCount++
-		case <-time.After(1 * time.Second):
-			t.Logf("Timeout waiting for response to message %d", i)
 		}
 
 		time.Sleep(100 * time.Millisecond)
@@ -259,9 +259,9 @@ func performBootNotification(t *testing.T, wsClient *utils.WebSocketClient, char
 
 	// 验证响应
 	utils.AssertBootNotificationResponse(t, response, messageID)
-	
+
 	// 等待一小段时间确保连接状态稳定
 	time.Sleep(100 * time.Millisecond)
-	
+
 	return nil
 }

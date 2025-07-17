@@ -20,23 +20,23 @@ type Processor struct {
 	// 核心组件
 	serializer *serialization.Serializer
 	validator  *validation.Validator
-	
+
 	// 事件系统
 	eventFactory *events.EventFactory
 	eventChan    chan events.Event
-	
+
 	// 消息跟踪
 	pendingRequests map[string]*PendingRequest
 	requestMutex    sync.RWMutex
-	
+
 	// 配置
 	config *ProcessorConfig
-	
+
 	// 生命周期管理
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
-	
+
 	// 日志器
 	logger *logger.Logger
 
@@ -48,23 +48,23 @@ type Processor struct {
 // ProcessorConfig 处理器配置
 type ProcessorConfig struct {
 	// 消息处理配置
-	MaxMessageSize    int           `json:"max_message_size"`
-	RequestTimeout    time.Duration `json:"request_timeout"`
-	MaxPendingRequests int          `json:"max_pending_requests"`
-	
+	MaxMessageSize     int           `json:"max_message_size"`
+	RequestTimeout     time.Duration `json:"request_timeout"`
+	MaxPendingRequests int           `json:"max_pending_requests"`
+
 	// 验证配置
-	EnableValidation     bool `json:"enable_validation"`
-	StrictValidation     bool `json:"strict_validation"`
-	ValidateMessageSize  bool `json:"validate_message_size"`
-	
+	EnableValidation    bool `json:"enable_validation"`
+	StrictValidation    bool `json:"strict_validation"`
+	ValidateMessageSize bool `json:"validate_message_size"`
+
 	// 事件配置
 	EventChannelSize int  `json:"event_channel_size"`
 	EnableEvents     bool `json:"enable_events"`
-	
+
 	// 性能配置
-	WorkerCount       int           `json:"worker_count"`
-	CleanupInterval   time.Duration `json:"cleanup_interval"`
-	EnableMetrics     bool          `json:"enable_metrics"`
+	WorkerCount     int           `json:"worker_count"`
+	CleanupInterval time.Duration `json:"cleanup_interval"`
+	EnableMetrics   bool          `json:"enable_metrics"`
 }
 
 // DefaultProcessorConfig 默认处理器配置
@@ -73,14 +73,14 @@ func DefaultProcessorConfig() *ProcessorConfig {
 		MaxMessageSize:     1024 * 1024, // 1MB
 		RequestTimeout:     30 * time.Second,
 		MaxPendingRequests: 1000,
-		
+
 		EnableValidation:    true,
 		StrictValidation:    false,
 		ValidateMessageSize: true,
-		
+
 		EventChannelSize: 1000,
 		EnableEvents:     true,
-		
+
 		WorkerCount:     4,
 		CleanupInterval: 1 * time.Minute,
 		EnableMetrics:   true,
@@ -89,13 +89,13 @@ func DefaultProcessorConfig() *ProcessorConfig {
 
 // PendingRequest 待处理请求
 type PendingRequest struct {
-	MessageID     string                 `json:"message_id"`
-	ChargePointID string                 `json:"charge_point_id"`
-	Action        string                 `json:"action"`
-	Payload       interface{}            `json:"payload"`
+	MessageID     string                  `json:"message_id"`
+	ChargePointID string                  `json:"charge_point_id"`
+	Action        string                  `json:"action"`
+	Payload       interface{}             `json:"payload"`
 	ResponseChan  chan *ProcessorResponse `json:"-"`
-	CreatedAt     time.Time              `json:"created_at"`
-	Timeout       time.Duration          `json:"timeout"`
+	CreatedAt     time.Time               `json:"created_at"`
+	Timeout       time.Duration           `json:"timeout"`
 }
 
 // ProcessorResponse 处理器响应
@@ -103,7 +103,7 @@ type ProcessorResponse struct {
 	MessageID   string      `json:"message_id"`
 	Success     bool        `json:"success"`
 	Payload     interface{} `json:"payload,omitempty"`
-	Error       error       `json:"error,omitempty"`
+	Error       string      `json:"error,omitempty"`
 	ProcessedAt time.Time   `json:"processed_at"`
 }
 
@@ -119,12 +119,12 @@ func NewProcessor(config *ProcessorConfig, podID string, storage storage.Connect
 	if config == nil {
 		config = DefaultProcessorConfig()
 	}
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	// 创建日志器
 	l, _ := logger.New(logger.DefaultConfig())
-	
+
 	return &Processor{
 		serializer:      serialization.NewSerializer(serialization.FormatJSON),
 		validator:       validation.NewValidator(),
@@ -143,17 +143,17 @@ func NewProcessor(config *ProcessorConfig, podID string, storage storage.Connect
 // Start 启动消息处理器
 func (p *Processor) Start() error {
 	p.logger.Info("Starting OCPP message processor")
-	
+
 	// 启动清理协程
 	p.wg.Add(1)
 	go p.cleanupRoutine()
-	
+
 	// 启动工作协程
 	for i := 0; i < p.config.WorkerCount; i++ {
 		p.wg.Add(1)
 		go p.workerRoutine(i)
 	}
-	
+
 	p.logger.Infof("OCPP message processor started with %d workers", p.config.WorkerCount)
 	return nil
 }
@@ -161,10 +161,10 @@ func (p *Processor) Start() error {
 // Stop 停止消息处理器
 func (p *Processor) Stop() error {
 	p.logger.Info("Stopping OCPP message processor")
-	
+
 	// 取消上下文
 	p.cancel()
-	
+
 	// 清理待处理请求
 	p.requestMutex.Lock()
 	for messageID, req := range p.pendingRequests {
@@ -172,13 +172,13 @@ func (p *Processor) Stop() error {
 		delete(p.pendingRequests, messageID)
 	}
 	p.requestMutex.Unlock()
-	
+
 	// 等待所有协程结束
 	p.wg.Wait()
-	
+
 	// 关闭事件通道
 	close(p.eventChan)
-	
+
 	p.logger.Info("OCPP message processor stopped")
 	return nil
 }
@@ -186,32 +186,32 @@ func (p *Processor) Stop() error {
 // ProcessMessage 处理OCPP消息
 func (p *Processor) ProcessMessage(chargePointID string, messageData []byte) (*ProcessorResponse, error) {
 	startTime := time.Now()
-	
+
 	// 验证消息大小
 	if p.config.ValidateMessageSize {
 		if err := p.validator.ValidateMessageSize(messageData, p.config.MaxMessageSize); err != nil {
 			return nil, fmt.Errorf("message size validation failed: %w", err)
 		}
 	}
-	
+
 	// 验证JSON格式
 	if err := p.validator.ValidateJSON(messageData); err != nil {
 		return nil, fmt.Errorf("JSON validation failed: %w", err)
 	}
-	
+
 	// 反序列化消息
 	messageType, messageID, action, payload, err := p.serializer.DeserializeMessage(messageData)
 	if err != nil {
 		return nil, fmt.Errorf("message deserialization failed: %w", err)
 	}
-	
+
 	// 验证OCPP消息格式（不包括payload，payload在具体处理时验证）
 	if p.config.EnableValidation {
 		if err := p.validator.ValidateOCPPMessage(messageType, messageID, action, nil); err != nil {
 			return nil, fmt.Errorf("OCPP message validation failed: %w", err)
 		}
 	}
-	
+
 	// 根据消息类型处理
 	switch messageType {
 	case 2: // Call
@@ -228,36 +228,36 @@ func (p *Processor) ProcessMessage(chargePointID string, messageData []byte) (*P
 // processCallMessage 处理Call消息
 func (p *Processor) processCallMessage(chargePointID, messageID, action string, payload json.RawMessage, startTime time.Time) (*ProcessorResponse, error) {
 	p.logger.Debugf("Processing Call message: %s from %s", action, chargePointID)
-	
+
 	// 创建payload实例
 	payloadInstance := p.serializer.CreatePayloadInstance(action, true)
 	if payloadInstance == nil {
 		return nil, fmt.Errorf("unsupported action: %s", action)
 	}
-	
+
 	// 反序列化payload
 	if err := p.serializer.DeserializePayload(payload, payloadInstance); err != nil {
 		return nil, fmt.Errorf("payload deserialization failed: %w", err)
 	}
-	
+
 	// 验证payload
 	if p.config.EnableValidation {
 		if err := p.validator.ValidateStruct(payloadInstance); err != nil {
 			return nil, fmt.Errorf("payload validation failed: %w", err)
 		}
 	}
-	
+
 	// 处理具体的action
 	responsePayload, err := p.handleAction(chargePointID, action, payloadInstance)
 	if err != nil {
 		return nil, fmt.Errorf("action handling failed: %w", err)
 	}
-	
+
 	// 发送事件
 	if p.config.EnableEvents {
 		p.sendActionEvent(chargePointID, action, payloadInstance)
 	}
-	
+
 	return &ProcessorResponse{
 		MessageID:   messageID,
 		Success:     true,
@@ -269,16 +269,16 @@ func (p *Processor) processCallMessage(chargePointID, messageID, action string, 
 // processCallResultMessage 处理CallResult消息
 func (p *Processor) processCallResultMessage(chargePointID, messageID string, payload json.RawMessage, startTime time.Time) (*ProcessorResponse, error) {
 	p.logger.Debugf("Processing CallResult message: %s from %s", messageID, chargePointID)
-	
+
 	// 查找待处理请求
 	p.requestMutex.RLock()
 	pendingReq, exists := p.pendingRequests[messageID]
 	p.requestMutex.RUnlock()
-	
+
 	if !exists {
 		return nil, fmt.Errorf("no pending request found for message ID: %s", messageID)
 	}
-	
+
 	// 创建响应payload实例
 	payloadInstance := p.serializer.CreatePayloadInstance(pendingReq.Action, false)
 	if payloadInstance != nil {
@@ -289,7 +289,7 @@ func (p *Processor) processCallResultMessage(chargePointID, messageID string, pa
 	} else {
 		payloadInstance = payload
 	}
-	
+
 	// 发送响应到等待的协程
 	response := &ProcessorResponse{
 		MessageID:   messageID,
@@ -297,61 +297,61 @@ func (p *Processor) processCallResultMessage(chargePointID, messageID string, pa
 		Payload:     payloadInstance,
 		ProcessedAt: time.Now(),
 	}
-	
+
 	select {
 	case pendingReq.ResponseChan <- response:
 	default:
 		p.logger.Warn("Response channel full, dropping response")
 	}
-	
+
 	// 移除待处理请求
 	p.requestMutex.Lock()
 	delete(p.pendingRequests, messageID)
 	p.requestMutex.Unlock()
-	
+
 	return response, nil
 }
 
 // processCallErrorMessage 处理CallError消息
 func (p *Processor) processCallErrorMessage(chargePointID, messageID string, payload json.RawMessage, startTime time.Time) (*ProcessorResponse, error) {
 	p.logger.Debugf("Processing CallError message: %s from %s", messageID, chargePointID)
-	
+
 	// 解析错误payload
 	var errorPayload map[string]interface{}
 	if err := json.Unmarshal(payload, &errorPayload); err != nil {
 		return nil, fmt.Errorf("failed to parse error payload: %w", err)
 	}
-	
+
 	// 查找待处理请求
 	p.requestMutex.RLock()
 	pendingReq, exists := p.pendingRequests[messageID]
 	p.requestMutex.RUnlock()
-	
+
 	if exists {
 		// 发送错误响应到等待的协程
 		response := &ProcessorResponse{
 			MessageID:   messageID,
 			Success:     false,
-			Error:       fmt.Errorf("OCPP error: %v", errorPayload["errorDescription"]),
+			Error:       fmt.Sprintf("OCPP error: %v", errorPayload["errorDescription"]),
 			ProcessedAt: time.Now(),
 		}
-		
+
 		select {
 		case pendingReq.ResponseChan <- response:
 		default:
 			p.logger.Warn("Response channel full, dropping error response")
 		}
-		
+
 		// 移除待处理请求
 		p.requestMutex.Lock()
 		delete(p.pendingRequests, messageID)
 		p.requestMutex.Unlock()
 	}
-	
+
 	return &ProcessorResponse{
 		MessageID:   messageID,
 		Success:     false,
-		Error:       fmt.Errorf("OCPP error: %v", errorPayload["errorDescription"]),
+		Error:       fmt.Sprintf("OCPP error: %v", errorPayload["errorDescription"]),
 		ProcessedAt: time.Now(),
 	}, nil
 }
@@ -578,7 +578,7 @@ func (p *Processor) cleanupExpiredRequests() {
 				case req.ResponseChan <- &ProcessorResponse{
 					MessageID:   messageID,
 					Success:     false,
-					Error:       fmt.Errorf("request timeout"),
+					Error:       "request timeout",
 					ProcessedAt: now,
 				}:
 				default:
