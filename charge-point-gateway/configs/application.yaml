@@ -6,7 +6,7 @@
 app:
   name: "charge-point-gateway"
   version: "1.0.0"
-  profile: "dev"  # 默认环境：dev, test, prod
+  profile: "local"  # 默认环境：dev, test, prod
 
 # 服务器配置
 server:

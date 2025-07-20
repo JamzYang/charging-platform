@@ -12,7 +12,7 @@ server:
 
 # Redis配置 - 本地测试环境（连接Docker端口映射）
 redis:
-  addr: "localhost:6380"  # 映射到本地6380端口
+  addr: "localhost:6379"  # 连接Docker Redis端口
   password: ""
   db: 0
   pool_size: 50
@@ -21,7 +21,7 @@ redis:
 # Kafka配置 - 本地测试环境（连接Docker端口映射）
 kafka:
   brokers:
-    - "localhost:9093"  # 映射到本地9093端口
+    - "localhost:9092"  # 连接Docker Kafka端口
   consumer_group: "gateway-local-consumer"
   upstream_topic: "ocpp-events-up-local"
   downstream_topic: "commands-down-local"
@@ -31,11 +31,12 @@ log:
   level: "debug"
   format: "console"
   output: "stdout"
+  async: true  # 启用异步日志以提高性能
 
 # 监控配置 - 本地测试环境
 monitoring:
-  metrics_addr: ":9090"
-  health_check_port: 8081
+  metrics_addr: ":9095"  # 避免与prometheus冲突
+  health_check_port: 8082  # 避免与测试容器冲突
   pprof_enabled: true
 
 # 缓存配置 - 本地测试环境

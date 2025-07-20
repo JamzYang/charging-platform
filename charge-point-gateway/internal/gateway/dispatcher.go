@@ -269,7 +269,7 @@ func (d *DefaultMessageDispatcher) DispatchMessage(ctx context.Context, chargePo
 	startTime := time.Now()
 
 	// 调试日志
-	d.logger.Errorf("DEBUG: DispatchMessage called with protocolVersion='%s' for %s", protocolVersion, chargePointID)
+	d.logger.Debugf("DispatchMessage called with protocolVersion='%s' for %s", protocolVersion, chargePointID)
 
 	// 更新统计信息
 	d.updateStats(protocolVersion, startTime, true)
@@ -282,13 +282,13 @@ func (d *DefaultMessageDispatcher) DispatchMessage(ctx context.Context, chargePo
 			d.updateStats(protocolVersion, startTime, false)
 			return nil, fmt.Errorf("failed to identify protocol version: %w", err)
 		}
-		d.logger.Errorf("DEBUG: Auto-identified protocol version as '%s'", protocolVersion)
+		d.logger.Debugf("Auto-identified protocol version as '%s'", protocolVersion)
 	}
 
 	// 规范化协议版本
 	normalizedVersion := protocol.NormalizeVersion(protocolVersion)
 	if normalizedVersion != "" && normalizedVersion != protocolVersion {
-		d.logger.Errorf("DEBUG: Normalized protocol version from '%s' to '%s'", protocolVersion, normalizedVersion)
+		d.logger.Debugf("Normalized protocol version from '%s' to '%s'", protocolVersion, normalizedVersion)
 		protocolVersion = normalizedVersion
 	}
 
@@ -296,7 +296,7 @@ func (d *DefaultMessageDispatcher) DispatchMessage(ctx context.Context, chargePo
 	handler, exists := d.GetHandlerForVersion(protocolVersion)
 	if !exists {
 		d.updateStats(protocolVersion, startTime, false)
-		d.logger.Errorf("DEBUG: Available handlers: %v", d.GetRegisteredVersions())
+		d.logger.Debugf("Available handlers: %v", d.GetRegisteredVersions())
 		return nil, fmt.Errorf("no handler registered for protocol version %s", protocolVersion)
 	}
 

@@ -679,7 +679,7 @@ func (w *ConnectionWrapper) receiveRoutine(eventChan chan<- ConnectionEvent) {
 
 // handleMessage 处理接收到的消息 - 按照架构设计实现
 func (w *ConnectionWrapper) handleMessage(message []byte) {
-	w.logger.Errorf("WEBSOCKET: Handling message from %s", w.chargePointID)
+	w.logger.Debugf("WEBSOCKET: Handling message from %s", w.chargePointID)
 
 	// 从连接元数据获取协议版本
 	protocolVersion := ""
@@ -688,7 +688,7 @@ func (w *ConnectionWrapper) handleMessage(message []byte) {
 			if rawVersion, ok := subprotocol.(string); ok {
 				// 规范化协议版本，确保一致性
 				protocolVersion = protocol.NormalizeVersion(rawVersion)
-				w.logger.Errorf("WEBSOCKET: Using normalized protocol version from metadata: %s (raw: %s)", protocolVersion, rawVersion)
+				w.logger.Debugf("WEBSOCKET: Using normalized protocol version from metadata: %s (raw: %s)", protocolVersion, rawVersion)
 			}
 		}
 	}
@@ -702,7 +702,7 @@ func (w *ConnectionWrapper) handleMessage(message []byte) {
 		return
 	}
 
-	w.logger.Errorf("WEBSOCKET: Successfully dispatched message from %s", w.chargePointID)
+	w.logger.Debugf("WEBSOCKET: Successfully dispatched message from %s", w.chargePointID)
 
 	// 如果有响应，则发送回客户端
 	if response != nil {
@@ -730,7 +730,7 @@ func (w *ConnectionWrapper) handleMessage(message []byte) {
 			// TODO: Handle CallError message creation
 			w.logger.Warnf("WEBSOCKET: Received a failed processor response for %s, but error handling is not implemented.", w.chargePointID)
 		} else {
-			w.logger.Errorf("WEBSOCKET: Received an unexpected response type for %s: %T", w.chargePointID, response)
+			w.logger.Warnf("WEBSOCKET: Received an unexpected response type for %s: %T", w.chargePointID, response)
 		}
 	}
 }

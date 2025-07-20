@@ -85,7 +85,7 @@ func main() {
 	wsConfig.Port = cfg.Server.Port
 	wsConfig.Path = cfg.Server.WebSocketPath
 	wsManager := websocket.NewManager(wsConfig, dispatcher, log)
-	log.Errorf("MAIN: WebSocket manager initialized with dispatcher")
+	log.Info("WebSocket manager initialized with dispatcher")
 	log.Info("WebSocket manager initialized")
 
 	// 10. 定义下行指令处理器
@@ -112,15 +112,15 @@ func main() {
 	log.Info("Kafka consumer starting...")
 
 	// 启动消息分发器
-	log.Errorf("MAIN: About to start message dispatcher")
+	log.Info("About to start message dispatcher")
 	if err := dispatcher.Start(); err != nil {
 		log.Fatalf("Failed to start message dispatcher: %v", err)
 	}
-	log.Errorf("MAIN: Message dispatcher started successfully")
+	log.Infof("Message dispatcher started successfully")
 
 	// 验证处理器注册
 	versions := dispatcher.GetRegisteredVersions()
-	log.Errorf("MAIN: Registered protocol versions: %v", versions)
+	log.Infof("Registered protocol versions: %v", versions)
 
 	// 启动 WebSocket 管理器
 	// 创建主应用的路由器
@@ -148,9 +148,9 @@ func main() {
 
 	// 启动WebSocket事件处理器
 	go func() {
-		log.Errorf("MAIN: WebSocket event handler started")
+		log.Debugf("WebSocket event handler started")
 		for event := range wsManager.GetEventChannel() {
-			log.Errorf("MAIN: Received event type: %s from %s", event.Type, event.ChargePointID)
+			log.Debugf("Received event type: %s from %s", event.Type, event.ChargePointID)
 			switch event.Type {
 			case websocket.EventTypeConnected:
 				log.Infof("Charge point %s connected", event.ChargePointID)

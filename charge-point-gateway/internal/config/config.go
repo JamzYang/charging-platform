@@ -136,11 +136,6 @@ func Load() (*Config, error) {
 		}
 	}
 
-	// 5. 兼容旧的config.yaml文件
-	if err := loadConfigFile("config"); err != nil {
-		fmt.Printf("Info: Legacy config.yaml not found (this is normal): %v\n", err)
-	}
-
 	// 6. 环境变量覆盖配置文件（最高优先级）
 	setupEnvironmentVariables()
 
@@ -170,7 +165,7 @@ func getProfile() string {
 	if profile := viper.GetString("app.profile"); profile != "" {
 		return profile
 	}
-	return "dev" // 默认开发环境
+	return "local" // 默认开发环境
 }
 
 // loadConfigFile 加载指定的配置文件
@@ -212,11 +207,76 @@ func setupEnvironmentVariables() {
 // printConfigInfo 打印配置加载信息（调试用）
 func printConfigInfo(cfg *Config) {
 	fmt.Printf("=== Configuration Loaded ===\n")
-	fmt.Printf("Profile: %s\n", cfg.App.Profile)
-	fmt.Printf("Server: %s:%d\n", cfg.Server.Host, cfg.Server.Port)
-	fmt.Printf("Redis: %s\n", cfg.Redis.Addr)
-	fmt.Printf("Kafka: %v\n", cfg.Kafka.Brokers)
-	fmt.Printf("Log Level: %s\n", cfg.Log.Level)
+
+	// 应用信息
+	fmt.Printf("App:\n")
+	fmt.Printf("  Name: %s\n", cfg.App.Name)
+	fmt.Printf("  Version: %s\n", cfg.App.Version)
+	fmt.Printf("  Profile: %s\n", cfg.App.Profile)
+	fmt.Printf("  Pod ID: %s\n", cfg.PodID)
+
+	// 服务器配置
+	fmt.Printf("Server:\n")
+	fmt.Printf("  Address: %s:%d\n", cfg.Server.Host, cfg.Server.Port)
+	fmt.Printf("  WebSocket Path: %s\n", cfg.Server.WebSocketPath)
+	fmt.Printf("  Read Timeout: %v\n", cfg.Server.ReadTimeout)
+	fmt.Printf("  Write Timeout: %v\n", cfg.Server.WriteTimeout)
+	fmt.Printf("  Max Connections: %d\n", cfg.Server.MaxConnections)
+
+	// Redis配置
+	fmt.Printf("Redis:\n")
+	fmt.Printf("  Address: %s\n", cfg.Redis.Addr)
+	fmt.Printf("  Database: %d\n", cfg.Redis.DB)
+	fmt.Printf("  Pool Size: %d\n", cfg.Redis.PoolSize)
+	fmt.Printf("  Min Idle Conns: %d\n", cfg.Redis.MinIdleConns)
+	fmt.Printf("  Dial Timeout: %v\n", cfg.Redis.DialTimeout)
+
+	// Kafka配置
+	fmt.Printf("Kafka:\n")
+	fmt.Printf("  Brokers: %v\n", cfg.Kafka.Brokers)
+	fmt.Printf("  Consumer Group: %s\n", cfg.Kafka.ConsumerGroup)
+	fmt.Printf("  Upstream Topic: %s\n", cfg.Kafka.UpstreamTopic)
+	fmt.Printf("  Downstream Topic: %s\n", cfg.Kafka.DownstreamTopic)
+	fmt.Printf("  Partition Num: %d\n", cfg.Kafka.PartitionNum)
+	fmt.Printf("  Producer Retry Max: %d\n", cfg.Kafka.Producer.RetryMax)
+	fmt.Printf("  Producer Return Success: %v\n", cfg.Kafka.Producer.ReturnSuccess)
+	fmt.Printf("  Producer Flush Frequency: %v\n", cfg.Kafka.Producer.FlushFrequency)
+
+	// 缓存配置
+	fmt.Printf("Cache:\n")
+	fmt.Printf("  Max Size: %d\n", cfg.Cache.MaxSize)
+	fmt.Printf("  TTL: %v\n", cfg.Cache.TTL)
+	fmt.Printf("  Cleanup Interval: %v\n", cfg.Cache.CleanupInterval)
+	fmt.Printf("  Memory Limit: %d MB\n", cfg.Cache.MemoryLimitMB)
+
+	// 日志配置
+	fmt.Printf("Log:\n")
+	fmt.Printf("  Level: %s\n", cfg.Log.Level)
+	fmt.Printf("  Format: %s\n", cfg.Log.Format)
+	fmt.Printf("  Output: %s\n", cfg.Log.Output)
+
+	// 监控配置
+	fmt.Printf("Monitoring:\n")
+	fmt.Printf("  Metrics Address: %s\n", cfg.Monitoring.MetricsAddr)
+	fmt.Printf("  Health Check Port: %d\n", cfg.Monitoring.HealthCheckPort)
+	fmt.Printf("  Pprof Enabled: %v\n", cfg.Monitoring.PprofEnabled)
+
+	// OCPP配置
+	fmt.Printf("OCPP:\n")
+	fmt.Printf("  Supported Versions: %v\n", cfg.OCPP.SupportedVersions)
+	fmt.Printf("  Heartbeat Interval: %v\n", cfg.OCPP.HeartbeatInterval)
+	fmt.Printf("  Connection Timeout: %v\n", cfg.OCPP.ConnectionTimeout)
+	fmt.Printf("  Message Timeout: %v\n", cfg.OCPP.MessageTimeout)
+
+	// 安全配置
+	fmt.Printf("Security:\n")
+	fmt.Printf("  TLS Enabled: %v\n", cfg.Security.TLSEnabled)
+	if cfg.Security.TLSEnabled {
+		fmt.Printf("  Cert File: %s\n", cfg.Security.CertFile)
+		fmt.Printf("  Key File: %s\n", cfg.Security.KeyFile)
+		fmt.Printf("  Client Auth: %v\n", cfg.Security.ClientAuth)
+	}
+
 	fmt.Printf("============================\n")
 }
 
@@ -225,7 +285,7 @@ func setDefaults() {
 	// 应用信息
 	viper.SetDefault("app.name", "charge-point-gateway")
 	viper.SetDefault("app.version", "1.0.0")
-	viper.SetDefault("app.profile", "dev")
+	viper.SetDefault("app.profile", "local")
 
 	// 服务器配置
 	viper.SetDefault("server.host", "0.0.0.0")

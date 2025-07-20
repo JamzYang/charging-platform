@@ -9,14 +9,15 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/diode"
 	"github.com/rs/zerolog/log"
 )
 
 // Logger 日志管理器
 type Logger struct {
-	logger   zerolog.Logger
-	config   *Config
-	logFile  *os.File // 用于文件输出时的文件句柄
+	logger  zerolog.Logger
+	config  *Config
+	logFile *os.File // 用于文件输出时的文件句柄
 }
 
 // Config 日志配置
@@ -26,6 +27,7 @@ type Config struct {
 	Output     string `json:"output"`     // 输出目标: stdout, stderr, file path
 	TimeFormat string `json:"timeFormat"` // 时间格式
 	Caller     bool   `json:"caller"`     // 是否显示调用者信息
+	Async      bool   `json:"async"`      // 是否启用异步日志
 }
 
 // DefaultConfig 默认日志配置
@@ -36,6 +38,7 @@ func DefaultConfig() *Config {
 		Output:     "stdout",
 		TimeFormat: time.RFC3339,
 		Caller:     true,
+		Async:      false, // 默认同步，可通过配置启用异步
 	}
 }
 
@@ -72,6 +75,16 @@ func New(config *Config) (*Logger, error) {
 			return nil, fmt.Errorf("failed to open log file %s: %w", config.Output, err)
 		}
 		output = file
+	}
+
+	// 如果启用异步，使用diode包装输出
+	if config.Async {
+		// 使用zerolog官方推荐的diode异步writer
+		// 参数：输出目标，缓冲区大小，刷新间隔，丢弃回调
+		output = diode.NewWriter(output, 1000, 10*time.Millisecond, func(missed int) {
+			// 当缓冲区满时的回调，记录丢弃的日志数量
+			fmt.Fprintf(os.Stderr, "Logger dropped %d messages\n", missed)
+		})
 	}
 
 	// 配置输出格式
@@ -185,7 +198,7 @@ func (l *Logger) SetLevel(level string) error {
 	if err != nil {
 		return fmt.Errorf("invalid log level %s: %w", level, err)
 	}
-	
+
 	l.logger = l.logger.Level(lvl)
 	l.config.Level = level
 	return nil
