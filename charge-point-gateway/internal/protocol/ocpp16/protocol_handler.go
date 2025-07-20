@@ -56,7 +56,7 @@ type ProtocolHandlerConfig struct {
 // DefaultProtocolHandlerConfig 默认协议处理器配置
 func DefaultProtocolHandlerConfig() *ProtocolHandlerConfig {
 	return &ProtocolHandlerConfig{
-		EventChannelSize: 1000,
+		EventChannelSize: 50000, // 增加事件通道容量以支持高并发
 		EnableEvents:     true,
 		EnableConversion: true,
 		EventBufferSize:  100,
@@ -65,7 +65,7 @@ func DefaultProtocolHandlerConfig() *ProtocolHandlerConfig {
 }
 
 // NewProtocolHandler 创建新的OCPP 1.6协议处理器
-func NewProtocolHandler(processor *Processor, converter gateway.ModelConverter, config *ProtocolHandlerConfig) *ProtocolHandler {
+func NewProtocolHandler(processor *Processor, converter gateway.ModelConverter, config *ProtocolHandlerConfig, log *logger.Logger) *ProtocolHandler {
 	if config == nil {
 		config = DefaultProtocolHandlerConfig()
 	}
@@ -76,8 +76,10 @@ func NewProtocolHandler(processor *Processor, converter gateway.ModelConverter, 
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 创建日志器
-	l, _ := logger.New(logger.DefaultConfig())
+	// 使用传入的日志器，如果为空则创建默认的
+	if log == nil {
+		log, _ = logger.New(logger.DefaultConfig())
+	}
 
 	return &ProtocolHandler{
 		processor: processor,
@@ -86,7 +88,7 @@ func NewProtocolHandler(processor *Processor, converter gateway.ModelConverter, 
 		eventChan: make(chan events.Event, config.EventChannelSize),
 		ctx:       ctx,
 		cancel:    cancel,
-		logger:    l,
+		logger:    log,
 	}
 }
 

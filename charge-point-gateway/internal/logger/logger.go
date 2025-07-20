@@ -109,8 +109,17 @@ func New(config *Config) (*Logger, error) {
 		logger = logger.With().Caller().Logger()
 	}
 
-	// 设置为全局日志器
+	// 设置日志级别到具体的 logger 实例
+	logger = logger.Level(level)
+
+	// 设置为全局日志器 - 确保全局 zerolog 也使用相同的配置
 	log.Logger = logger
+
+	// 同时设置我们自己的全局 logger
+	globalLogger = &Logger{
+		logger: logger,
+		config: config,
+	}
 
 	return &Logger{
 		logger: logger,

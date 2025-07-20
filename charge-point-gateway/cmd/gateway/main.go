@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,12 +36,16 @@ func main() {
 		Level:  cfg.Log.Level,
 		Format: cfg.Log.Format,
 		Output: cfg.Log.Output,
+		Async:  cfg.Log.Async, // 使用配置中的异步设置
 	})
 	if err != nil {
 		fmt.Printf("Failed to initialize logger: %v\n", err)
 		os.Exit(1)
 	}
 	log.Info("Logger initialized")
+
+	// 确保全局 logger 也被正确设置（这在 logger.New 中已经完成，但这里再次确认）
+	// 这样其他组件使用 zerolog 的全局函数时也会使用正确的配置
 
 	// 3. 初始化存储
 	storage, err := storage.NewRedisStorage(cfg.Redis)
@@ -67,26 +73,52 @@ func main() {
 	log.Info("Model converter initialized")
 
 	// 7. 初始化 OCPP 1.6 处理器
-	processor := ocpp16.NewProcessor(ocpp16.DefaultProcessorConfig(), cfg.PodID, storage)
-	log.Info("OCPP 1.6 processor initialized")
+	processorConfig := ocpp16.DefaultProcessorConfig()
+	processorConfig.WorkerCount = cfg.OCPP.WorkerCount // 使用配置文件中的Worker数量
+	processor := ocpp16.NewProcessor(processorConfig, cfg.PodID, storage, log)
+	log.Infof("OCPP 1.6 processor initialized with %d workers", cfg.OCPP.WorkerCount)
 
 	// 8. 初始化中央消息分发器
 	dispatcher := gateway.NewDefaultMessageDispatcher(gateway.DefaultDispatcherConfig(), log)
 	// 注册处理器
-	handler := ocpp16.NewProtocolHandler(processor, converter, ocpp16.DefaultProtocolHandlerConfig())
+	handler := ocpp16.NewProtocolHandler(processor, converter, ocpp16.DefaultProtocolHandlerConfig(), log)
 	if err := dispatcher.RegisterHandler(protocol.OCPP_VERSION_1_6, handler); err != nil {
 		log.Fatalf("Failed to register %s handler: %v", protocol.OCPP_VERSION_1_6, err)
 	}
 	log.Info("Dispatcher initialized and handlers registered")
 
-	// 9. 初始化 WebSocket 管理器 - 按照架构设计传递分发器
-	wsConfig := websocket.DefaultConfig()
-	wsConfig.Host = cfg.Server.Host
-	wsConfig.Port = cfg.Server.Port
-	wsConfig.Path = cfg.Server.WebSocketPath
-	wsManager := websocket.NewManager(wsConfig, dispatcher, log)
+	// 9. 初始化 WebSocket 管理器 - 使用配置文件中的完整配置
+	wsConfig := &websocket.Config{
+		Host: cfg.Server.Host,
+		Port: cfg.Server.Port,
+		Path: cfg.Server.WebSocketPath,
+
+		ReadBufferSize:    cfg.WebSocket.ReadBufferSize,
+		WriteBufferSize:   cfg.WebSocket.WriteBufferSize,
+		HandshakeTimeout:  cfg.WebSocket.HandshakeTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		PingInterval:      cfg.WebSocket.PingInterval,
+		PongTimeout:       cfg.WebSocket.PongTimeout,
+		MaxMessageSize:    cfg.WebSocket.MaxMessageSize,
+		EnableCompression: cfg.WebSocket.EnableCompression,
+
+		MaxConnections:  cfg.Server.MaxConnections,
+		IdleTimeout:     cfg.WebSocket.IdleTimeout,
+		CleanupInterval: cfg.WebSocket.CleanupInterval,
+
+		CheckOrigin:       cfg.WebSocket.CheckOrigin,
+		AllowedOrigins:    cfg.WebSocket.AllowedOrigins,
+		EnableSubprotocol: cfg.WebSocket.EnableSubprotocol,
+		Subprotocols:      protocol.GetSupportedVersions(),
+	}
+	wsManager := websocket.NewManager(wsConfig, dispatcher, log, cfg.EventChannels.BufferSize)
 	log.Info("WebSocket manager initialized with dispatcher")
 	log.Info("WebSocket manager initialized")
+
+	// 启动全局Ping服务 - 减少Goroutine数量的优化
+	wsManager.StartGlobalPingService()
+	log.Info("Global ping service started")
 
 	// 10. 定义下行指令处理器
 	commandHandler := func(cmd *message.Command) {
@@ -129,41 +161,84 @@ func main() {
 	wsPath := wsConfig.Path + "/"
 	log.Infof("Registering WebSocket handler at path: %s", wsPath)
 	mainMux.HandleFunc(wsPath, wsManager.ServeWS)
-	// 注册健康检查处理器
-	mainMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
-	})
+	// 注册健康检查处理器 - 使用 WebSocket 管理器的健康检查
+	mainMux.HandleFunc("/health", wsManager.HandleHealthCheck)
 
 	// 启动独立的metrics服务器 (已在前面启动，此处移除重复启动)
 	// go startMetricsServer(cfg.GetMetricsAddr(), log)
 
-	// 启动主应用服务器
+	// 启动主应用服务器 - 使用优化的TCP监听器
 	go func() {
 		log.Infof("Main server starting on %s", cfg.GetServerAddr())
-		if err := http.ListenAndServe(cfg.GetServerAddr(), mainMux); err != nil {
+
+		// 创建优化的TCP监听器，增加监听队列大小
+		// 使用标准的监听器，Docker容器内的优化主要通过sysctls实现
+		listener, err := net.Listen("tcp", cfg.GetServerAddr())
+		if err != nil {
+			log.Fatalf("Failed to create listener: %v", err)
+		}
+
+		// 创建HTTP服务器
+		server := &http.Server{
+			Handler:        mainMux,
+			ReadTimeout:    cfg.Server.ReadTimeout,
+			WriteTimeout:   cfg.Server.WriteTimeout,
+			IdleTimeout:    120 * time.Second,
+			MaxHeaderBytes: 1 << 20, // 1MB
+		}
+
+		log.Infof("Optimized server listening on %s with enhanced backlog", listener.Addr().String())
+		if err := server.Serve(listener); err != nil {
 			log.Fatalf("Main server failed: %v", err)
 		}
 	}()
 
-	// 启动WebSocket事件处理器
+	// 启动WebSocket事件处理器 - 优化为高性能模式
 	go func() {
 		log.Debugf("WebSocket event handler started")
+
+		// 统计计数器，减少日志输出频率
+		var (
+			connectedCount    int64
+			disconnectedCount int64
+			messageCount      int64
+			errorCount        int64
+		)
+
+		// 定期输出统计信息
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		go func() {
+			for range ticker.C {
+				if atomic.LoadInt64(&connectedCount) > 0 || atomic.LoadInt64(&messageCount) > 0 {
+					log.Infof("Event stats - Connected: %d, Disconnected: %d, Messages: %d, Errors: %d",
+						atomic.SwapInt64(&connectedCount, 0),
+						atomic.SwapInt64(&disconnectedCount, 0),
+						atomic.SwapInt64(&messageCount, 0),
+						atomic.SwapInt64(&errorCount, 0))
+				}
+			}
+		}()
+
 		for event := range wsManager.GetEventChannel() {
-			log.Debugf("Received event type: %s from %s", event.Type, event.ChargePointID)
+			// 快速处理，减少同步操作
 			switch event.Type {
 			case websocket.EventTypeConnected:
-				log.Infof("Charge point %s connected", event.ChargePointID)
-				// 可以在这里添加连接事件处理逻辑
+				atomic.AddInt64(&connectedCount, 1)
+				// 只记录重要的连接事件，不是每个都记录
+				if atomic.LoadInt64(&connectedCount)%1000 == 0 {
+					log.Infof("Milestone: %d charge points connected", atomic.LoadInt64(&connectedCount))
+				}
 			case websocket.EventTypeDisconnected:
-				log.Infof("Charge point %s disconnected", event.ChargePointID)
-				// 可以在这里添加断开连接事件处理逻辑
+				atomic.AddInt64(&disconnectedCount, 1)
 			case websocket.EventTypeMessage:
-				// 消息处理已移至 websocket.ConnectionWrapper.handleMessage
-				// 此处仅记录事件，用于监控和调试
-				log.Debugf("Message event received from %s (size: %d)", event.ChargePointID, len(event.Message))
+				atomic.AddInt64(&messageCount, 1)
+				// 消息事件不记录日志，避免I/O瓶颈
 			case websocket.EventTypeError:
-				log.Errorf("WebSocket error for %s: %v", event.ChargePointID, event.Error)
+				atomic.AddInt64(&errorCount, 1)
+				// 错误事件仍然需要记录，但使用异步方式
+				go log.Errorf("WebSocket error for %s: %v", event.ChargePointID, event.Error)
 			}
 		}
 	}()

@@ -8,7 +8,26 @@ app:
 # 服务器配置 - 本地测试环境
 server:
   host: "0.0.0.0"
-  port: 8080
+  port: 8081
+  websocket_path: "/ocpp"
+  read_timeout: "300s"    # 延长读取超时到5分钟，匹配OCPP心跳间隔
+  write_timeout: "60s"
+  max_connections: 25000  # 设置为25000以支持2万连接测试
+
+# WebSocket配置 - 本地测试环境
+websocket:
+  read_buffer_size: 4096
+  write_buffer_size: 4096
+  handshake_timeout: "10s"
+  ping_interval: "30s"
+  pong_timeout: "10s"
+  max_message_size: 1048576  # 1MB
+  enable_compression: false
+  idle_timeout: "15m"        # 延长空闲超时以适应压测
+  cleanup_interval: "5m"     # 降低清理频率
+  check_origin: false
+  allowed_origins: []
+  enable_subprotocol: true
 
 # Redis配置 - 本地测试环境（连接Docker端口映射）
 redis:
@@ -28,14 +47,18 @@ kafka:
 
 # 日志配置 - 本地测试环境
 log:
-  level: "debug"
+  level: "warn"
   format: "console"
   output: "stdout"
   async: true  # 启用异步日志以提高性能
 
+# 事件通道配置 - 统一管理所有组件的事件通道容量
+event_channels:
+  buffer_size: 50000  # 统一事件通道容量，支持高并发测试
+
 # 监控配置 - 本地测试环境
 monitoring:
-  metrics_addr: ":9095"  # 避免与prometheus冲突
+  metrics_addr: ":9091"  # 本地运行时避免与容器版本冲突（容器版本使用9090）
   health_check_port: 8082  # 避免与测试容器冲突
   pprof_enabled: true
 

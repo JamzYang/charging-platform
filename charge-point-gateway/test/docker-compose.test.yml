@@ -82,6 +82,9 @@ services:
       - "8081:8080"  # WebSocket端口
       - "9091:9090"  # Metrics端口
       - "8083:8081"  # Health check端口
+    # 优化容器网络和资源限制（仅使用 Docker Desktop 支持的参数）
+    sysctls:
+      - net.core.somaxconn=65536          # 增加监听队列大小
     environment:
       # 设置运行环境为test
       APP_PROFILE: "test"
@@ -89,7 +92,6 @@ services:
       REDIS_ADDR: "redis-test:6379"
       KAFKA_BROKERS: "kafka-test:29092"
       # 其他配置
-      LOG_LEVEL: "debug"
       SERVER_PORT: "8080"
       MONITORING_HEALTH_CHECK_PORT: "8081"
     volumes:
@@ -108,12 +110,12 @@ services:
     networks:
       - test-network
 
-  # 测试客户端服务
-  test-client:
+  # 分布式测试客户端服务 - 客户端1
+  test-client-1:
     build:
       context: ..
       dockerfile: test/e2e/performance/Dockerfile.testclient
-    container_name: test-client
+    container_name: test-client-1
     depends_on:
       gateway-test:
         condition: service_healthy
@@ -124,11 +126,15 @@ services:
       REDIS_ADDR: "redis-test:6379"
       # 将Kafka地址指向容器网络中的kafka-test服务
       KAFKA_BROKERS: "kafka-test:9092"
+      # 分布式测试参数
+      CONNECTION_COUNT: "10000"
+      CLIENT_ID: "1"
+      ID_OFFSET: "0"        # CP-0 到 CP-9999
     command: >
-      sh -c "echo 'Waiting for gateway to be fully ready...' &&
+      sh -c "echo 'Test Client 1: Waiting for gateway to be fully ready...' &&
              apk add --no-cache curl &&
              until curl -f http://gateway-test:8080/health; do echo '...'; sleep 2; done &&
-             echo 'Gateway is ready, starting test.' &&
+             echo 'Gateway is ready, starting distributed test client 1 (10k connections).' &&
              /app/performance.test -test.v -test.run TestTC_E2E_04_ConcurrentConnections"
     networks:
       - test-network
@@ -136,6 +142,166 @@ services:
       nofile:
         soft: 120000
         hard: 120000
+    profiles:
+      - distributed
+
+  # 分布式测试客户端服务 - 客户端2
+  test-client-2:
+    build:
+      context: ..
+      dockerfile: test/e2e/performance/Dockerfile.testclient
+    container_name: test-client-2
+    depends_on:
+      gateway-test:
+        condition: service_healthy
+    environment:
+      GATEWAY_URL: "ws://gateway-test:8080/ocpp"
+      REDIS_ADDR: "redis-test:6379"
+      KAFKA_BROKERS: "kafka-test:9092"
+      CONNECTION_COUNT: "10000"
+      CLIENT_ID: "2"
+      ID_OFFSET: "10000"    # CP-10000 到 CP-19999
+    command: >
+      sh -c "echo 'Test Client 2: Waiting for gateway to be fully ready...' &&
+             apk add --no-cache curl &&
+             until curl -f http://gateway-test:8080/health; do echo '...'; sleep 2; done &&
+             echo 'Gateway is ready, starting distributed test client 2 (10k connections).' &&
+             /app/performance.test -test.v -test.run TestTC_E2E_04_ConcurrentConnections"
+    networks:
+      - test-network
+    ulimits:
+      nofile:
+        soft: 120000
+        hard: 120000
+    profiles:
+      - distributed
+
+  # 分布式测试客户端服务 - 客户端3
+  test-client-3:
+    build:
+      context: ..
+      dockerfile: test/e2e/performance/Dockerfile.testclient
+    container_name: test-client-3
+    depends_on:
+      gateway-test:
+        condition: service_healthy
+    environment:
+      GATEWAY_URL: "ws://gateway-test:8080/ocpp"
+      REDIS_ADDR: "redis-test:6379"
+      KAFKA_BROKERS: "kafka-test:9092"
+      CONNECTION_COUNT: "10000"
+      CLIENT_ID: "3"
+      ID_OFFSET: "20000"    # CP-20000 到 CP-29999
+    command: >
+      sh -c "echo 'Test Client 3: Waiting for gateway to be fully ready...' &&
+             apk add --no-cache curl &&
+             until curl -f http://gateway-test:8080/health; do echo '...'; sleep 2; done &&
+             echo 'Gateway is ready, starting distributed test client 3 (10k connections).' &&
+             /app/performance.test -test.v -test.run TestTC_E2E_04_ConcurrentConnections"
+    networks:
+      - test-network
+    ulimits:
+      nofile:
+        soft: 120000
+        hard: 120000
+    profiles:
+      - distributed
+
+  # 分布式测试客户端服务 - 客户端4 (6万连接挑战)
+  test-client-4:
+    build:
+      context: ..
+      dockerfile: test/e2e/performance/Dockerfile.testclient
+    container_name: test-client-4
+    depends_on:
+      gateway-test:
+        condition: service_healthy
+    environment:
+      GATEWAY_URL: "ws://gateway-test:8080/ocpp"
+      REDIS_ADDR: "redis-test:6379"
+      KAFKA_BROKERS: "kafka-test:9092"
+      CONNECTION_COUNT: "10000"
+      CLIENT_ID: "4"
+      ID_OFFSET: "30000"    # CP-30000 到 CP-39999
+    command: >
+      sh -c "echo 'Test Client 4: Waiting for gateway to be fully ready...' &&
+             apk add --no-cache curl &&
+             until curl -f http://gateway-test:8080/health; do echo '...'; sleep 2; done &&
+             echo 'Gateway is ready, starting distributed test client 4 (10k connections).' &&
+             /app/performance.test -test.v -test.run TestTC_E2E_04_ConcurrentConnections"
+    networks:
+      - test-network
+    ulimits:
+      nofile:
+        soft: 120000
+        hard: 120000
+    profiles:
+      - distributed
+      - extreme
+
+  # 分布式测试客户端服务 - 客户端5
+  test-client-5:
+    build:
+      context: ..
+      dockerfile: test/e2e/performance/Dockerfile.testclient
+    container_name: test-client-5
+    depends_on:
+      gateway-test:
+        condition: service_healthy
+    environment:
+      GATEWAY_URL: "ws://gateway-test:8080/ocpp"
+      REDIS_ADDR: "redis-test:6379"
+      KAFKA_BROKERS: "kafka-test:9092"
+      CONNECTION_COUNT: "10000"
+      CLIENT_ID: "5"
+      ID_OFFSET: "40000"    # CP-40000 到 CP-49999
+    command: >
+      sh -c "echo 'Test Client 5: Waiting for gateway to be fully ready...' &&
+             apk add --no-cache curl &&
+             until curl -f http://gateway-test:8080/health; do echo '...'; sleep 2; done &&
+             echo 'Gateway is ready, starting distributed test client 5 (10k connections).' &&
+             /app/performance.test -test.v -test.run TestTC_E2E_04_ConcurrentConnections"
+    networks:
+      - test-network
+    ulimits:
+      nofile:
+        soft: 120000
+        hard: 120000
+    profiles:
+      - distributed
+      - extreme
+
+  # 分布式测试客户端服务 - 客户端6
+  test-client-6:
+    build:
+      context: ..
+      dockerfile: test/e2e/performance/Dockerfile.testclient
+    container_name: test-client-6
+    depends_on:
+      gateway-test:
+        condition: service_healthy
+    environment:
+      GATEWAY_URL: "ws://gateway-test:8080/ocpp"
+      REDIS_ADDR: "redis-test:6379"
+      KAFKA_BROKERS: "kafka-test:9092"
+      CONNECTION_COUNT: "10000"
+      CLIENT_ID: "6"
+      ID_OFFSET: "50000"    # CP-50000 到 CP-59999
+    command: >
+      sh -c "echo 'Test Client 6: Waiting for gateway to be fully ready...' &&
+             apk add --no-cache curl &&
+             until curl -f http://gateway-test:8080/health; do echo '...'; sleep 2; done &&
+             echo 'Gateway is ready, starting distributed test client 6 (10k connections).' &&
+             /app/performance.test -test.v -test.run TestTC_E2E_04_ConcurrentConnections"
+    networks:
+      - test-network
+    ulimits:
+      nofile:
+        soft: 120000
+        hard: 120000
+    profiles:
+      - distributed
+      - extreme
 
   # Kafka管理工具（可选，用于调试）
   kafka-ui:

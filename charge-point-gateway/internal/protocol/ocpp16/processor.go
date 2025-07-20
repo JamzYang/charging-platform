@@ -81,7 +81,7 @@ func DefaultProcessorConfig() *ProcessorConfig {
 		EventChannelSize: 1000,
 		EnableEvents:     true,
 
-		WorkerCount:     4,
+		WorkerCount:     100, // 从4增加到100，支持高并发消息处理
 		CleanupInterval: 1 * time.Minute,
 		EnableMetrics:   true,
 	}
@@ -115,15 +115,17 @@ type ProcessorRequest struct {
 }
 
 // NewProcessor 创建新的OCPP消息处理器
-func NewProcessor(config *ProcessorConfig, podID string, storage storage.ConnectionStorage) *Processor {
+func NewProcessor(config *ProcessorConfig, podID string, storage storage.ConnectionStorage, log *logger.Logger) *Processor {
 	if config == nil {
 		config = DefaultProcessorConfig()
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// 创建日志器
-	l, _ := logger.New(logger.DefaultConfig())
+	// 使用传入的日志器，如果为空则创建默认的
+	if log == nil {
+		log, _ = logger.New(logger.DefaultConfig())
+	}
 
 	return &Processor{
 		serializer:      serialization.NewSerializer(serialization.FormatJSON),
@@ -134,7 +136,7 @@ func NewProcessor(config *ProcessorConfig, podID string, storage storage.Connect
 		config:          config,
 		ctx:             ctx,
 		cancel:          cancel,
-		logger:          l,
+		logger:          log,
 		podID:           podID,
 		storage:         storage,
 	}

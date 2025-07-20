@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/charging-platform/charge-point-gateway/internal/config"
+	"github.com/go-redis/redis/v8"
 )
 
 // RedisStorage 使用 Redis 来存储连接映射
@@ -18,9 +18,14 @@ type RedisStorage struct {
 // NewRedisStorage 创建一个新的 RedisStorage 实例
 func NewRedisStorage(cfg config.RedisConfig) (*RedisStorage, error) {
 	client := redis.NewClient(&redis.Options{
-		Addr:     cfg.Addr,
-		Password: cfg.Password,
-		DB:       cfg.DB,
+		Addr:         cfg.Addr,
+		Password:     cfg.Password,
+		DB:           cfg.DB,
+		PoolSize:     cfg.PoolSize,
+		MinIdleConns: cfg.MinIdleConns,
+		DialTimeout:  cfg.DialTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
 	})
 
 	// 尝试 ping Redis 以验证连接

@@ -189,7 +189,7 @@ func TestConnectionWrapper_SendMessage(t *testing.T) {
 
 	wrapper := &ConnectionWrapper{
 		chargePointID: "CP001",
-		sendChan:      make(chan []byte, 10),
+		sendChan:      make(chan WebSocketMessage, 10),
 		ctx:           ctx,
 		cancel:        cancel,
 		lastActivity:  time.Now(),
@@ -204,7 +204,8 @@ func TestConnectionWrapper_SendMessage(t *testing.T) {
 	// 验证消息在通道中
 	select {
 	case receivedMessage := <-wrapper.sendChan:
-		assert.Equal(t, message, receivedMessage)
+		assert.Equal(t, MessageTypeText, receivedMessage.Type)
+		assert.Equal(t, message, receivedMessage.Data)
 	case <-time.After(time.Second):
 		t.Fatal("Message not received in send channel")
 	}
@@ -217,7 +218,7 @@ func TestConnectionWrapper_SendMessage_ChannelFull(t *testing.T) {
 
 	wrapper := &ConnectionWrapper{
 		chargePointID: "CP001",
-		sendChan:      make(chan []byte, 1), // 容量为1的通道
+		sendChan:      make(chan WebSocketMessage, 1), // 容量为1的通道
 		ctx:           ctx,
 		cancel:        cancel,
 		config:        config,
@@ -242,7 +243,7 @@ func TestConnectionWrapper_SendMessage_ContextCancelled(t *testing.T) {
 
 	wrapper := &ConnectionWrapper{
 		chargePointID: "CP001",
-		sendChan:      make(chan []byte, 10),
+		sendChan:      make(chan WebSocketMessage, 10),
 		ctx:           ctx,
 		cancel:        cancel,
 		config:        config,

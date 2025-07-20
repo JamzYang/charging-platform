@@ -18,6 +18,133 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// GlobalPingService 全局Ping服务，用于减少Goroutine数量
+type GlobalPingService struct {
+	connections sync.Map // map[string]*ConnectionWrapper
+	ticker      *time.Ticker
+	interval    time.Duration
+	logger      *logger.Logger
+	ctx         context.Context
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
+
+	// 监控指标
+	totalPings   int64
+	skippedPings int64
+	mutex        sync.RWMutex
+}
+
+// NewGlobalPingService 创建全局Ping服务
+func NewGlobalPingService(interval time.Duration, logger *logger.Logger) *GlobalPingService {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &GlobalPingService{
+		interval: interval,
+		logger:   logger,
+		ctx:      ctx,
+		cancel:   cancel,
+	}
+}
+
+// Start 启动全局Ping服务
+func (s *GlobalPingService) Start() {
+	s.ticker = time.NewTicker(s.interval)
+	s.wg.Add(1)
+
+	go func() {
+		defer s.wg.Done()
+		defer s.ticker.Stop()
+
+		s.logger.Infof("Global ping service started with interval %v", s.interval)
+
+		for {
+			select {
+			case <-s.ctx.Done():
+				s.logger.Info("Global ping service stopping...")
+				return
+			case <-s.ticker.C:
+				s.pingAllConnections()
+			}
+		}
+	}()
+}
+
+// Stop 停止全局Ping服务
+func (s *GlobalPingService) Stop() {
+	s.cancel()
+	s.wg.Wait()
+	s.logger.Info("Global ping service stopped")
+}
+
+// AddConnection 添加连接到ping服务
+func (s *GlobalPingService) AddConnection(chargePointID string, wrapper *ConnectionWrapper) {
+	s.connections.Store(chargePointID, wrapper)
+	s.logger.Debugf("Added connection %s to global ping service", chargePointID)
+}
+
+// RemoveConnection 从ping服务中移除连接
+func (s *GlobalPingService) RemoveConnection(chargePointID string) {
+	s.connections.Delete(chargePointID)
+	s.logger.Debugf("Removed connection %s from global ping service", chargePointID)
+}
+
+// pingAllConnections 向所有连接发送ping
+func (s *GlobalPingService) pingAllConnections() {
+	var activeConns, successPings, skippedPings int64
+
+	s.connections.Range(func(key, value interface{}) bool {
+		activeConns++
+		chargePointID := key.(string)
+		wrapper := value.(*ConnectionWrapper)
+
+		// 创建ping消息
+		pingMsg := WebSocketMessage{
+			Type: MessageTypePing,
+			Data: []byte{},
+		}
+
+		// 尝试发送ping，如果发送队列满则跳过（优雅降级）
+		select {
+		case wrapper.sendChan <- pingMsg:
+			successPings++
+		default:
+			skippedPings++
+			s.logger.Debugf("Skipped ping for %s: send queue full", chargePointID)
+		}
+
+		return true // 继续遍历
+	})
+
+	// 更新统计信息
+	s.mutex.Lock()
+	s.totalPings += successPings
+	s.skippedPings += skippedPings
+	s.mutex.Unlock()
+
+	if activeConns > 0 {
+		s.logger.Debugf("Global ping completed: %d active connections, %d successful pings, %d skipped pings",
+			activeConns, successPings, skippedPings)
+	}
+}
+
+// GetStats 获取ping服务统计信息
+func (s *GlobalPingService) GetStats() map[string]interface{} {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	var activeConns int64
+	s.connections.Range(func(key, value interface{}) bool {
+		activeConns++
+		return true
+	})
+
+	return map[string]interface{}{
+		"active_connections": activeConns,
+		"total_pings":        s.totalPings,
+		"skipped_pings":      s.skippedPings,
+		"ping_interval":      s.interval.String(),
+	}
+}
+
 // getGlobalLogger 获取全局日志器
 func getGlobalLogger() *logger.Logger {
 	// 创建一个默认的日志器
@@ -42,6 +169,9 @@ type Manager struct {
 
 	// 消息分发器 - 按照架构设计添加
 	dispatcher gateway.MessageDispatcher
+
+	// 全局Ping服务 - 减少Goroutine数量的优化
+	pingService *GlobalPingService
 
 	// 生命周期管理
 	ctx       context.Context
@@ -133,6 +263,21 @@ const (
 	EventTypePong         ConnectionEventType = "pong"
 )
 
+// MessageType 消息类型枚举
+type MessageType int
+
+const (
+	MessageTypeText MessageType = iota
+	MessageTypePing
+	MessageTypePong
+)
+
+// WebSocketMessage WebSocket消息结构
+type WebSocketMessage struct {
+	Type MessageType
+	Data []byte
+}
+
 // ConnectionWrapper 连接包装器
 type ConnectionWrapper struct {
 	// 基础连接信息
@@ -140,8 +285,8 @@ type ConnectionWrapper struct {
 	chargePointID string
 	metadata      *connection.Connection
 
-	// 消息通道
-	sendChan chan []byte
+	// 消息通道 - 统一处理所有类型的WebSocket消息
+	sendChan chan WebSocketMessage
 
 	// 消息分发器 - 按照架构设计添加
 	dispatcher gateway.MessageDispatcher
@@ -160,7 +305,7 @@ type ConnectionWrapper struct {
 }
 
 // NewManager 创建新的WebSocket管理器
-func NewManager(config *Config, dispatcher gateway.MessageDispatcher, log *logger.Logger) *Manager {
+func NewManager(config *Config, dispatcher gateway.MessageDispatcher, log *logger.Logger, eventChannelSize int) *Manager {
 	if config == nil {
 		config = DefaultConfig()
 	}
@@ -196,12 +341,21 @@ func NewManager(config *Config, dispatcher gateway.MessageDispatcher, log *logge
 		},
 	}
 
+	// 使用传入的统一事件通道容量
+	if eventChannelSize <= 0 {
+		eventChannelSize = 50000 // 默认值
+	}
+
+	// 创建全局Ping服务
+	pingService := NewGlobalPingService(config.PingInterval, log)
+
 	return &Manager{
 		config:      config,
 		upgrader:    upgrader,
 		connections: make(map[string]*ConnectionWrapper),
-		eventChan:   make(chan ConnectionEvent, 100),
+		eventChan:   make(chan ConnectionEvent, eventChannelSize),
 		dispatcher:  dispatcher,
+		pingService: pingService,
 		ctx:         ctx,
 		cancel:      cancel,
 		startTime:   time.Now(),
@@ -241,13 +395,34 @@ func (m *Manager) extractChargePointID(path string) string {
 	return chargePointID
 }
 
-// handleHealthCheck 处理健康检查请求
-func (m *Manager) handleHealthCheck(w http.ResponseWriter, r *http.Request) {
+// StartGlobalPingService 启动全局Ping服务
+func (m *Manager) StartGlobalPingService() {
+	if m.pingService != nil {
+		m.pingService.Start()
+		m.logger.Info("Global ping service started successfully")
+	}
+}
+
+// StopGlobalPingService 停止全局Ping服务
+func (m *Manager) StopGlobalPingService() {
+	if m.pingService != nil {
+		m.pingService.Stop()
+		m.logger.Info("Global ping service stopped successfully")
+	}
+}
+
+// HandleHealthCheck 处理健康检查请求
+func (m *Manager) HandleHealthCheck(w http.ResponseWriter, r *http.Request) {
 	status := map[string]interface{}{
 		"status":      "healthy",
 		"timestamp":   time.Now().Format(time.RFC3339),
 		"connections": m.GetConnectionCount(),
 		"uptime":      time.Since(m.startTime).String(),
+	}
+
+	// 添加全局Ping服务状态
+	if m.pingService != nil {
+		status["ping_service"] = m.pingService.GetStats()
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -289,6 +464,9 @@ func (m *Manager) handleConnectionsStatus(w http.ResponseWriter, r *http.Request
 // Shutdown 优雅关闭WebSocket管理器
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.logger.Info("Shutting down WebSocket manager...")
+
+	// 停止全局ping服务
+	m.StopGlobalPingService()
 
 	// 取消上下文
 	m.cancel()
@@ -437,7 +615,7 @@ func (m *Manager) createConnectionWrapper(conn *websocket.Conn, chargePointID st
 		conn:          conn,
 		chargePointID: chargePointID,
 		metadata:      metadata,
-		sendChan:      make(chan []byte, 100),
+		sendChan:      make(chan WebSocketMessage, 1000), // 增加发送通道容量，使用新的消息类型
 		dispatcher:    m.dispatcher,
 		ctx:           ctx,
 		cancel:        cancel,
@@ -456,10 +634,13 @@ func (m *Manager) handleConnectionWrapper(wrapper *ConnectionWrapper) {
 	// 启动发送协程
 	go wrapper.sendRoutine()
 
-	// 启动ping协程
-	go wrapper.pingRoutine()
+	// 注册到全局ping服务（替代独立的pingRoutine）
+	if m.pingService != nil {
+		m.pingService.AddConnection(wrapper.chargePointID, wrapper)
+		defer m.pingService.RemoveConnection(wrapper.chargePointID)
+	}
 
-	// 处理接收消息
+	// 处理接收消息 - 在主goroutine中同步运行，保持连接活跃
 	wrapper.receiveRoutine(m.eventChan)
 }
 
@@ -576,8 +757,12 @@ func (m *Manager) BroadcastMessage(message []byte) {
 
 // SendMessage 发送消息
 func (w *ConnectionWrapper) SendMessage(message []byte) error {
+	wsMsg := WebSocketMessage{
+		Type: MessageTypeText,
+		Data: message,
+	}
 	select {
-	case w.sendChan <- message:
+	case w.sendChan <- wsMsg:
 		return nil
 	case <-w.ctx.Done():
 		return fmt.Errorf("connection closed")
@@ -588,8 +773,13 @@ func (w *ConnectionWrapper) SendMessage(message []byte) error {
 
 // Close 关闭连接
 func (w *ConnectionWrapper) Close() {
+	// 首先取消context，通知所有goroutine退出
 	w.cancel()
+
+	// 关闭WebSocket连接
 	w.conn.Close()
+
+	// 最后关闭发送通道
 	close(w.sendChan)
 }
 
@@ -613,25 +803,40 @@ func (w *ConnectionWrapper) updateActivity() {
 	w.metadata.UpdateLastActivity()
 }
 
-// sendRoutine 发送协程
+// sendRoutine 发送协程 - 统一处理所有WebSocket写入操作
 func (w *ConnectionWrapper) sendRoutine() {
 	for {
 		select {
 		case <-w.ctx.Done():
 			return
-		case message, ok := <-w.sendChan:
+		case wsMessage, ok := <-w.sendChan:
 			if !ok {
 				return
 			}
 
 			w.conn.SetWriteDeadline(time.Now().Add(w.config.WriteTimeout))
-			if err := w.conn.WriteMessage(websocket.TextMessage, message); err != nil {
+
+			// 根据消息类型选择对应的WebSocket消息类型
+			var err error
+			switch wsMessage.Type {
+			case MessageTypeText:
+				err = w.conn.WriteMessage(websocket.TextMessage, wsMessage.Data)
+			case MessageTypePing:
+				err = w.conn.WriteMessage(websocket.PingMessage, wsMessage.Data)
+			case MessageTypePong:
+				err = w.conn.WriteMessage(websocket.PongMessage, wsMessage.Data)
+			default:
+				w.logger.Errorf("Unknown message type: %v", wsMessage.Type)
+				continue
+			}
+
+			if err != nil {
 				w.logger.Errorf("Failed to send message to %s: %v", w.chargePointID, err)
 				return
 			}
 
 			w.updateActivity()
-			w.metadata.IncrementMessagesSent(int64(len(message)))
+			w.metadata.IncrementMessagesSent(int64(len(wsMessage.Data)))
 		}
 	}
 }
@@ -735,7 +940,7 @@ func (w *ConnectionWrapper) handleMessage(message []byte) {
 	}
 }
 
-// pingRoutine ping协程
+// pingRoutine ping协程 - 通过sendRoutine统一发送ping消息
 func (w *ConnectionWrapper) pingRoutine() {
 	ticker := time.NewTicker(w.config.PingInterval)
 	defer ticker.Stop()
@@ -745,17 +950,31 @@ func (w *ConnectionWrapper) pingRoutine() {
 		case <-w.ctx.Done():
 			return
 		case <-ticker.C:
-			w.conn.SetWriteDeadline(time.Now().Add(w.config.WriteTimeout))
-			if err := w.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
-				w.logger.Errorf("Failed to send ping to %s: %v", w.chargePointID, err)
-				return
+			// 通过sendChan发送ping消息，确保所有WebSocket写入操作都通过sendRoutine
+			pingMsg := WebSocketMessage{
+				Type: MessageTypePing,
+				Data: nil,
 			}
 
-			// 发送ping事件
-			select {
-			case w.sendChan <- nil: // 这里应该通过事件通道发送，但为了简化先这样处理
-			default:
-			}
+			// 使用defer+recover处理可能的panic
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						// 通道已关闭，静默处理
+						w.logger.Warnf("Ping routine stopped for %s: %v", w.chargePointID, r)
+					}
+				}()
+
+				select {
+				case w.sendChan <- pingMsg:
+					// ping消息已发送到队列
+				case <-w.ctx.Done():
+					return
+				default:
+					// 如果发送队列满了，记录警告但不阻塞
+					w.logger.Warnf("Failed to send ping to %s: send channel full", w.chargePointID)
+				}
+			}()
 		}
 	}
 }

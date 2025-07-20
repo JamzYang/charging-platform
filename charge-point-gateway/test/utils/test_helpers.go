@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -237,7 +238,7 @@ func setupWithExternalServices(t *testing.T) *TestEnvironment {
 	redisAddr := getEnvOrDefault("REDIS_ADDR", "localhost:6379")
 	kafkaBrokers := []string{getEnvOrDefault("KAFKA_BROKERS", "localhost:9092")}
 	// 优先从环境变量读取GATEWAY_URL，以支持容器化测试客户端
-	gatewayURL := getEnvOrDefault("GATEWAY_URL", "ws://localhost:8080/ocpp")
+	gatewayURL := getEnvOrDefault("GATEWAY_URL", "ws://localhost:8081/ocpp")
 
 	t.Logf("Using external services - Redis: %s, Kafka: %v, Gateway: %s", redisAddr, kafkaBrokers, gatewayURL)
 
@@ -334,10 +335,43 @@ func NewWebSocketClient(gatewayURL, chargePointID string) (*WebSocketClient, err
 	headers := make(map[string][]string)
 	headers["Sec-WebSocket-Protocol"] = []string{protocol.OCPP_VERSION_1_6}
 
+	// 创建优化的拨号器，强制使用IPv4并优化TCP参数
+	dialer := &websocket.Dialer{
+		NetDial: func(network, addr string) (net.Conn, error) {
+			// 强制使用IPv4
+			if network == "tcp" {
+				network = "tcp4"
+			}
+
+			// 创建自定义拨号器，优化TCP参数
+			d := &net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 30 * time.Second,
+			}
+
+			conn, err := d.Dial(network, addr)
+			if err != nil {
+				return nil, err
+			}
+
+			// 优化TCP连接参数
+			if tcpConn, ok := conn.(*net.TCPConn); ok {
+				tcpConn.SetNoDelay(true)
+				tcpConn.SetKeepAlive(true)
+				tcpConn.SetKeepAlivePeriod(30 * time.Second)
+			}
+
+			return conn, nil
+		},
+		HandshakeTimeout: 10 * time.Second,
+		ReadBufferSize:   4096,
+		WriteBufferSize:  4096,
+	}
+
 	// 添加调试日志
 	// fmt.Printf("DEBUG: WebSocket client requesting subprotocol: %s\n", protocol.OCPP_VERSION_1_6)
 
-	conn, _, err := websocket.DefaultDialer.Dial(u.String(), headers)
+	conn, _, err := dialer.Dial(u.String(), headers)
 	if err != nil {
 		return nil, err
 	}

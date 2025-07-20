@@ -9,6 +9,24 @@ app:
 server:
   host: "0.0.0.0"
   port: 8080
+  websocket_path: "/ocpp"
+  read_timeout: "300s"    # 延长读取超时以支持长时间测试
+  write_timeout: "60s"
+  max_connections: 70000  # 提高连接数限制，测试优化后的性能
+
+# WebSocket配置 - 测试环境优化
+websocket:
+  read_buffer_size: 4096
+  write_buffer_size: 4096
+  handshake_timeout: "10s"
+  ping_interval: "60s"        # 增加ping间隔，减少网络压力
+  pong_timeout: "30s"         # 增加pong超时
+  max_message_size: 1048576   # 1MB
+  enable_compression: false
+  idle_timeout: "60m"         # 大幅增加空闲超时到1小时
+  cleanup_interval: "30m"     # 增加清理间隔到30分钟
+  check_origin: false
+  enable_subprotocol: true
 
 # Redis配置 - Docker测试环境
 redis:
@@ -28,9 +46,14 @@ kafka:
 
 # 日志配置 - 测试环境
 log:
-  level: "debug"
+  level: "warn"
   format: "json"  # 测试环境使用JSON格式便于日志收集
   output: "stdout"
+  async: true
+
+# 事件通道配置 - 统一管理所有组件的事件通道容量
+event_channels:
+  buffer_size: 90000  # 统一事件通道容量，支持高并发测试
 
 # 监控配置 - 测试环境
 monitoring:
@@ -52,3 +75,4 @@ ocpp:
   heartbeat_interval: "60s"  # 测试环境较短心跳间隔
   connection_timeout: "30s"
   message_timeout: "15s"
+  worker_count: 200          # 高并发测试环境增加Worker数量

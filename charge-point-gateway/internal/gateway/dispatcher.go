@@ -88,7 +88,7 @@ type DispatcherConfig struct {
 func DefaultDispatcherConfig() *DispatcherConfig {
 	return &DispatcherConfig{
 		DefaultProtocolVersion: protocol.GetDefaultVersion(),
-		EventChannelBuffer:     1000,
+		EventChannelBuffer:     50000, // 增加事件通道容量以支持高并发
 		EnableVersionDetection: true,
 		MessageTimeout:         30 * time.Second,
 		EnableStats:            true,

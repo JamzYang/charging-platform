@@ -11,16 +11,18 @@ import (
 
 // Config 应用程序配置结构
 type Config struct {
-	App        AppConfig        `mapstructure:"app"`
-	PodID      string           `mapstructure:"pod_id"`
-	Server     ServerConfig     `mapstructure:"server"`
-	Redis      RedisConfig      `mapstructure:"redis"`
-	Kafka      KafkaConfig      `mapstructure:"kafka"`
-	Cache      CacheConfig      `mapstructure:"cache"`
-	Log        LogConfig        `mapstructure:"log"`
-	Monitoring MonitoringConfig `mapstructure:"monitoring"`
-	OCPP       OCPPConfig       `mapstructure:"ocpp"`
-	Security   SecurityConfig   `mapstructure:"security"`
+	App           AppConfig          `mapstructure:"app"`
+	PodID         string             `mapstructure:"pod_id"`
+	Server        ServerConfig       `mapstructure:"server"`
+	WebSocket     WebSocketConfig    `mapstructure:"websocket"`
+	Redis         RedisConfig        `mapstructure:"redis"`
+	Kafka         KafkaConfig        `mapstructure:"kafka"`
+	Cache         CacheConfig        `mapstructure:"cache"`
+	Log           LogConfig          `mapstructure:"log"`
+	EventChannels EventChannelConfig `mapstructure:"event_channels"`
+	Monitoring    MonitoringConfig   `mapstructure:"monitoring"`
+	OCPP          OCPPConfig         `mapstructure:"ocpp"`
+	Security      SecurityConfig     `mapstructure:"security"`
 }
 
 // AppConfig 应用程序基本信息
@@ -38,6 +40,22 @@ type ServerConfig struct {
 	ReadTimeout    time.Duration `mapstructure:"read_timeout"`
 	WriteTimeout   time.Duration `mapstructure:"write_timeout"`
 	MaxConnections int           `mapstructure:"max_connections"`
+}
+
+// WebSocketConfig WebSocket配置
+type WebSocketConfig struct {
+	ReadBufferSize    int           `mapstructure:"read_buffer_size"`
+	WriteBufferSize   int           `mapstructure:"write_buffer_size"`
+	HandshakeTimeout  time.Duration `mapstructure:"handshake_timeout"`
+	PingInterval      time.Duration `mapstructure:"ping_interval"`
+	PongTimeout       time.Duration `mapstructure:"pong_timeout"`
+	MaxMessageSize    int64         `mapstructure:"max_message_size"`
+	EnableCompression bool          `mapstructure:"enable_compression"`
+	IdleTimeout       time.Duration `mapstructure:"idle_timeout"`
+	CleanupInterval   time.Duration `mapstructure:"cleanup_interval"`
+	CheckOrigin       bool          `mapstructure:"check_origin"`
+	AllowedOrigins    []string      `mapstructure:"allowed_origins"`
+	EnableSubprotocol bool          `mapstructure:"enable_subprotocol"`
 }
 
 // RedisConfig Redis配置
@@ -89,6 +107,20 @@ type LogConfig struct {
 	Level  string `mapstructure:"level"`
 	Format string `mapstructure:"format"`
 	Output string `mapstructure:"output"`
+	Async  bool   `mapstructure:"async"`
+}
+
+// EventChannelConfig 事件通道配置 - 统一管理所有组件的事件通道容量
+type EventChannelConfig struct {
+	// 统一事件通道容量 - 所有组件使用相同容量，避免瓶颈
+	BufferSize int `mapstructure:"buffer_size" json:"buffer_size"`
+}
+
+// DefaultEventChannelConfig 默认事件通道配置
+func DefaultEventChannelConfig() EventChannelConfig {
+	return EventChannelConfig{
+		BufferSize: 50000, // 统一事件通道容量，支持高并发场景
+	}
 }
 
 // MonitoringConfig 监控配置
@@ -104,6 +136,7 @@ type OCPPConfig struct {
 	HeartbeatInterval time.Duration `mapstructure:"heartbeat_interval"`
 	ConnectionTimeout time.Duration `mapstructure:"connection_timeout"`
 	MessageTimeout    time.Duration `mapstructure:"message_timeout"`
+	WorkerCount       int           `mapstructure:"worker_count"`
 }
 
 // SecurityConfig 安全配置
@@ -223,6 +256,20 @@ func printConfigInfo(cfg *Config) {
 	fmt.Printf("  Write Timeout: %v\n", cfg.Server.WriteTimeout)
 	fmt.Printf("  Max Connections: %d\n", cfg.Server.MaxConnections)
 
+	// WebSocket配置
+	fmt.Printf("WebSocket:\n")
+	fmt.Printf("  Read Buffer Size: %d\n", cfg.WebSocket.ReadBufferSize)
+	fmt.Printf("  Write Buffer Size: %d\n", cfg.WebSocket.WriteBufferSize)
+	fmt.Printf("  Handshake Timeout: %v\n", cfg.WebSocket.HandshakeTimeout)
+	fmt.Printf("  Ping Interval: %v\n", cfg.WebSocket.PingInterval)
+	fmt.Printf("  Pong Timeout: %v\n", cfg.WebSocket.PongTimeout)
+	fmt.Printf("  Max Message Size: %d\n", cfg.WebSocket.MaxMessageSize)
+	fmt.Printf("  Enable Compression: %v\n", cfg.WebSocket.EnableCompression)
+	fmt.Printf("  Idle Timeout: %v\n", cfg.WebSocket.IdleTimeout)
+	fmt.Printf("  Cleanup Interval: %v\n", cfg.WebSocket.CleanupInterval)
+	fmt.Printf("  Check Origin: %v\n", cfg.WebSocket.CheckOrigin)
+	fmt.Printf("  Enable Subprotocol: %v\n", cfg.WebSocket.EnableSubprotocol)
+
 	// Redis配置
 	fmt.Printf("Redis:\n")
 	fmt.Printf("  Address: %s\n", cfg.Redis.Addr)
@@ -254,6 +301,7 @@ func printConfigInfo(cfg *Config) {
 	fmt.Printf("  Level: %s\n", cfg.Log.Level)
 	fmt.Printf("  Format: %s\n", cfg.Log.Format)
 	fmt.Printf("  Output: %s\n", cfg.Log.Output)
+	fmt.Printf("  async: %s\n", cfg.Log.Async)
 
 	// 监控配置
 	fmt.Printf("Monitoring:\n")
@@ -267,6 +315,7 @@ func printConfigInfo(cfg *Config) {
 	fmt.Printf("  Heartbeat Interval: %v\n", cfg.OCPP.HeartbeatInterval)
 	fmt.Printf("  Connection Timeout: %v\n", cfg.OCPP.ConnectionTimeout)
 	fmt.Printf("  Message Timeout: %v\n", cfg.OCPP.MessageTimeout)
+	fmt.Printf("  Worker Count: %d\n", cfg.OCPP.WorkerCount)
 
 	// 安全配置
 	fmt.Printf("Security:\n")
@@ -294,6 +343,20 @@ func setDefaults() {
 	viper.SetDefault("server.read_timeout", "60s")
 	viper.SetDefault("server.write_timeout", "60s")
 	viper.SetDefault("server.max_connections", 100000)
+
+	// WebSocket配置
+	viper.SetDefault("websocket.read_buffer_size", 4096)
+	viper.SetDefault("websocket.write_buffer_size", 4096)
+	viper.SetDefault("websocket.handshake_timeout", "10s")
+	viper.SetDefault("websocket.ping_interval", "30s")
+	viper.SetDefault("websocket.pong_timeout", "10s")
+	viper.SetDefault("websocket.max_message_size", 1048576) // 1MB
+	viper.SetDefault("websocket.enable_compression", false)
+	viper.SetDefault("websocket.idle_timeout", "15m")
+	viper.SetDefault("websocket.cleanup_interval", "10m")
+	viper.SetDefault("websocket.check_origin", false)
+	viper.SetDefault("websocket.allowed_origins", []string{})
+	viper.SetDefault("websocket.enable_subprotocol", true)
 
 	// Redis配置
 	viper.SetDefault("redis.addr", "localhost:6379")
@@ -323,6 +386,9 @@ func setDefaults() {
 	viper.SetDefault("log.format", "console")
 	viper.SetDefault("log.output", "stdout")
 
+	// 事件通道配置
+	viper.SetDefault("event_channels.buffer_size", 50000)
+
 	// 监控配置
 	viper.SetDefault("monitoring.metrics_addr", ":9090")
 	viper.SetDefault("monitoring.health_check_port", 8081)
@@ -333,6 +399,7 @@ func setDefaults() {
 	viper.SetDefault("ocpp.heartbeat_interval", "300s")
 	viper.SetDefault("ocpp.connection_timeout", "60s")
 	viper.SetDefault("ocpp.message_timeout", "30s")
+	viper.SetDefault("ocpp.worker_count", 100) // 默认100个worker，支持高并发
 
 	// 安全配置
 	viper.SetDefault("security.tls_enabled", false)

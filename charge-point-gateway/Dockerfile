@@ -11,7 +11,8 @@ WORKDIR /app
 
 # 复制 go mod 文件
 COPY go.mod go.sum ./
-
+# 设置国内Go代理以加速下载
+ENV GOPROXY=https://goproxy.cn,direct
 # 下载依赖
 RUN go mod download
 

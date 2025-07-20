@@ -18,5 +18,13 @@ COPY ../../../ .
 # -o: 指定输出文件
 RUN go test -c -o /app/performance.test github.com/charging-platform/charge-point-gateway/test/e2e/performance
 
+# 设置默认环境变量（分布式测试支持）
+ENV CONNECTION_COUNT=10000
+ENV CLIENT_ID=single
+ENV ID_OFFSET=0
+ENV GATEWAY_URL=ws://gateway-test:8080/ocpp
+ENV REDIS_ADDR=redis-test:6379
+ENV KAFKA_BROKERS=kafka-test:9092
+
 # 最终的运行命令
 CMD ["/app/performance.test", "-test.v", "-test.run", "TestTC_E2E_04_ConcurrentConnections"]
