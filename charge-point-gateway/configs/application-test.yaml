@@ -15,8 +15,8 @@ redis:
   addr: "redis-test:6379"
   password: ""
   db: 0
-  pool_size: 50
-  min_idle_conns: 5
+  pool_size: 1000
+  min_idle_conns: 50
 
 # Kafka配置 - Docker测试环境
 kafka:
@@ -40,10 +40,10 @@ monitoring:
 
 # 缓存配置 - 测试环境
 cache:
-  max_size: 5000
+  max_size: 100000
   ttl: "1h"
   cleanup_interval: "10m"
-  memory_limit_mb: 256
+  memory_limit_mb: 1024
 
 # OCPP配置 - 测试环境较短超时
 ocpp:

@@ -100,7 +100,7 @@ func DefaultConfig() *Config {
 		MaxMessageSize:    1024 * 1024, // 1MB
 		EnableCompression: false,
 
-		MaxConnections:  1000,
+		MaxConnections:  20000,
 		IdleTimeout:     5 * time.Minute,
 		CleanupInterval: 1 * time.Minute,
 

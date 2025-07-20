@@ -236,6 +236,7 @@ func setupWithExternalServices(t *testing.T) *TestEnvironment {
 	// 从环境变量获取服务地址，或使用Docker Compose测试环境的默认值
 	redisAddr := getEnvOrDefault("REDIS_ADDR", "localhost:6379")
 	kafkaBrokers := []string{getEnvOrDefault("KAFKA_BROKERS", "localhost:9092")}
+	// 优先从环境变量读取GATEWAY_URL，以支持容器化测试客户端
 	gatewayURL := getEnvOrDefault("GATEWAY_URL", "ws://localhost:8080/ocpp")
 
 	t.Logf("Using external services - Redis: %s, Kafka: %v, Gateway: %s", redisAddr, kafkaBrokers, gatewayURL)
@@ -334,7 +335,7 @@ func NewWebSocketClient(gatewayURL, chargePointID string) (*WebSocketClient, err
 	headers["Sec-WebSocket-Protocol"] = []string{protocol.OCPP_VERSION_1_6}
 
 	// 添加调试日志
-	fmt.Printf("DEBUG: WebSocket client requesting subprotocol: %s\n", protocol.OCPP_VERSION_1_6)
+	// fmt.Printf("DEBUG: WebSocket client requesting subprotocol: %s\n", protocol.OCPP_VERSION_1_6)
 
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), headers)
 	if err != nil {

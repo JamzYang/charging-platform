@@ -125,13 +125,18 @@ func main() {
 	// 启动 WebSocket 管理器
 	// 创建主应用的路由器
 	mainMux := http.NewServeMux()
-	// 将 WebSocket 处理器注册到主路由器
-	mainMux.HandleFunc(wsConfig.Path, wsManager.ServeWS)
+	// 将 WebSocket 处理器注册到主路由器 - 添加 "/" 以匹配子路径
+	wsPath := wsConfig.Path + "/"
+	log.Infof("Registering WebSocket handler at path: %s", wsPath)
+	mainMux.HandleFunc(wsPath, wsManager.ServeWS)
 	// 注册健康检查处理器
 	mainMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("OK"))
 	})
+
+	// 启动独立的metrics服务器 (已在前面启动，此处移除重复启动)
+	// go startMetricsServer(cfg.GetMetricsAddr(), log)
 
 	// 启动主应用服务器
 	go func() {

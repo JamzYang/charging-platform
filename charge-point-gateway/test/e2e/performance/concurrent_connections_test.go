@@ -20,8 +20,8 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 	defer env.Cleanup()
 
 	// 测试参数（在实际环境中可以设置为1000）
-	connectionCount := 100 // 降低数量以适应测试环境
-	testDuration := 10 * time.Second
+	connectionCount := 10000 // 降低数量以适应测试环境
+	testDuration := 1200 * time.Second
 
 	t.Logf("Starting concurrent connections test with %d connections for %v", connectionCount, testDuration)
 
@@ -52,7 +52,10 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 			wsClient, err := utils.NewWebSocketClient(env.GatewayURL, chargePointID)
 			if err != nil {
 				atomic.AddInt64(&failedConnections, 1)
-				t.Logf("Failed to connect %s: %v", chargePointID, err)
+				// Only log the first few errors to avoid log spam
+				if atomic.LoadInt64(&failedConnections) <= 10 {
+					t.Logf("Failed to connect %s: %v", chargePointID, err)
+				}
 				return
 			}
 			defer wsClient.Close()
@@ -62,7 +65,7 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 			// 执行BootNotification
 			err = performBootNotification(t, wsClient, chargePointID)
 			if err != nil {
-				t.Logf("BootNotification failed for %s: %v", chargePointID, err)
+				// t.Logf("BootNotification failed for %s: %v", chargePointID, err)
 				return
 			}
 
@@ -81,7 +84,7 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 					err := sendHeartbeat(wsClient, chargePointID)
 					if err != nil {
 						atomic.AddInt64(&failedMessages, 1)
-						t.Logf("Heartbeat failed for %s: %v", chargePointID, err)
+						// t.Logf("Heartbeat failed for %s: %v", chargePointID, err)
 						return
 					}
 
@@ -92,6 +95,10 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 				}
 			}
 		}(i)
+		// 在启动每个goroutine之间加入微小的延迟，以平滑连接风暴
+		if i/100 == 0 {
+			time.Sleep(1 * time.Millisecond)
+		}
 	}
 
 	// 等待所有连接完成
@@ -120,7 +127,11 @@ func TestTC_E2E_04_ConcurrentConnections(t *testing.T) {
 		assert.Greater(t, messageSuccessRate, 90.0, "At least 90% of messages should succeed")
 	}
 
-	t.Log("TC-E2E-04 Concurrent connections test passed")
+	if t.Failed() {
+		t.Log("TC-E2E-04 Concurrent connections test FAILED")
+	} else {
+		t.Log("TC-E2E-04 Concurrent connections test PASSED")
+	}
 }
 
 // TestTC_E2E_05_HighThroughput 测试用例TC-E2E-05: 高吞吐量模拟消息洪峰

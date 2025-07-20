@@ -100,8 +100,42 @@ services:
       interval: 10s
       timeout: 5s
       retries: 3
+    mem_limit: 4g
+    ulimits:
+      nofile:
+        soft: 120000
+        hard: 120000
     networks:
       - test-network
+
+  # 测试客户端服务
+  test-client:
+    build:
+      context: ..
+      dockerfile: test/e2e/performance/Dockerfile.testclient
+    container_name: test-client
+    depends_on:
+      gateway-test:
+        condition: service_healthy
+    environment:
+      # 将网关地址指向容器网络中的gateway-test服务
+      GATEWAY_URL: "ws://gateway-test:8080/ocpp"
+      # 将Redis地址指向容器网络中的redis-test服务
+      REDIS_ADDR: "redis-test:6379"
+      # 将Kafka地址指向容器网络中的kafka-test服务
+      KAFKA_BROKERS: "kafka-test:9092"
+    command: >
+      sh -c "echo 'Waiting for gateway to be fully ready...' &&
+             apk add --no-cache curl &&
+             until curl -f http://gateway-test:8080/health; do echo '...'; sleep 2; done &&
+             echo 'Gateway is ready, starting test.' &&
+             /app/performance.test -test.v -test.run TestTC_E2E_04_ConcurrentConnections"
+    networks:
+      - test-network
+    ulimits:
+      nofile:
+        soft: 120000
+        hard: 120000
 
   # Kafka管理工具（可选，用于调试）
   kafka-ui:
