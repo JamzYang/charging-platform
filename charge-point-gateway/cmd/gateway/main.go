@@ -123,12 +123,23 @@ func main() {
 	log.Errorf("MAIN: Registered protocol versions: %v", versions)
 
 	// 启动 WebSocket 管理器
+	// 创建主应用的路由器
+	mainMux := http.NewServeMux()
+	// 将 WebSocket 处理器注册到主路由器
+	mainMux.HandleFunc(wsConfig.Path, wsManager.ServeWS)
+	// 注册健康检查处理器
+	mainMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("OK"))
+	})
+
+	// 启动主应用服务器
 	go func() {
-		if err := wsManager.Start(); err != nil {
-			log.Errorf("WebSocket manager failed: %v", err)
+		log.Infof("Main server starting on %s", cfg.GetServerAddr())
+		if err := http.ListenAndServe(cfg.GetServerAddr(), mainMux); err != nil {
+			log.Fatalf("Main server failed: %v", err)
 		}
 	}()
-	log.Info("WebSocket manager starting...")
 
 	// 启动WebSocket事件处理器
 	go func() {

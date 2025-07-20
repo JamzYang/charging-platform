@@ -269,7 +269,7 @@ func TestTC_E2E_04_05_LoadStability(t *testing.T) {
 
 	// 测试参数
 	connectionCount := 30
-	testDuration := 30 * time.Second
+	testDuration := 1200 * time.Second
 
 	t.Logf("Starting load stability test with %d connections for %v", connectionCount, testDuration)
 

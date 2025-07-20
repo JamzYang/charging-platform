@@ -50,9 +50,9 @@ USER appuser
 # 暴露端口
 EXPOSE 8080 9090 8081
 
-# 健康检查
+# 健康检查 - 健康检查端点在WebSocket服务器(8080)上
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8081/health || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 # 启动应用
 CMD ["./gateway"]

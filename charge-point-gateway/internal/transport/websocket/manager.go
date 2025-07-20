@@ -209,52 +209,8 @@ func NewManager(config *Config, dispatcher gateway.MessageDispatcher, log *logge
 	}
 }
 
-// Start 启动WebSocket管理器
-func (m *Manager) Start() error {
-	m.logger.Infof("Starting WebSocket manager on %s:%d%s",
-		m.config.Host, m.config.Port, m.config.Path)
-
-	// 启动清理协程
-	m.wg.Add(1)
-	go m.cleanupRoutine()
-
-	// 启动HTTP服务器
-	m.wg.Add(1)
-	go m.startHTTPServer()
-
-	return nil
-}
-
-// startHTTPServer 启动HTTP服务器
-func (m *Manager) startHTTPServer() {
-	defer m.wg.Done()
-
-	mux := http.NewServeMux()
-
-	// 注册WebSocket路由
-	mux.HandleFunc(m.config.Path+"/", m.handleWebSocketUpgrade)
-
-	// 注册健康检查路由
-	mux.HandleFunc("/health", m.handleHealthCheck)
-
-	// 注册连接状态路由
-	mux.HandleFunc("/connections", m.handleConnectionsStatus)
-
-	server := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", m.config.Host, m.config.Port),
-		Handler: mux,
-	}
-
-	m.logger.Infof("HTTP server starting on %s", server.Addr)
-
-	// 启动服务器
-	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		m.logger.Errorf("HTTP server failed: %v", err)
-	}
-}
-
-// handleWebSocketUpgrade 处理WebSocket升级请求
-func (m *Manager) handleWebSocketUpgrade(w http.ResponseWriter, r *http.Request) {
+// ServeWS 是一个HTTP处理器，用于处理WebSocket升级请求
+func (m *Manager) ServeWS(w http.ResponseWriter, r *http.Request) {
 	// 从URL路径中提取充电桩ID
 	chargePointID := m.extractChargePointID(r.URL.Path)
 	if chargePointID == "" {

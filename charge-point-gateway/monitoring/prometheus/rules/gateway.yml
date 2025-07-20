@@ -1,0 +1,113 @@
+groups:
+  - name: gateway.rules
+    rules:
+      # 连接数告警
+      - alert: HighActiveConnections
+        expr: gateway_active_connections > 80000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "网关活跃连接数过高"
+          description: "当前活跃连接数: {{ $value }}, 超过80000阈值"
+
+      - alert: CriticalActiveConnections
+        expr: gateway_active_connections > 95000
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "网关活跃连接数严重过高"
+          description: "当前活跃连接数: {{ $value }}, 超过95000阈值，接近最大连接数限制"
+
+      # 消息处理延迟告警
+      - alert: HighMessageProcessingLatency
+        expr: histogram_quantile(0.95, rate(gateway_message_processing_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "消息处理延迟过高"
+          description: "95%分位数消息处理延迟: {{ $value }}秒, 超过1秒阈值"
+
+      # 错误率告警
+      - alert: HighErrorRate
+        expr: rate(gateway_messages_received_total{status="error"}[5m]) / rate(gateway_messages_received_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "消息错误率过高"
+          description: "消息错误率: {{ $value | humanizePercentage }}, 超过5%阈值"
+
+      # 事件发布失败告警
+      - alert: EventPublishFailure
+        expr: increase(gateway_events_published_total{status="error"}[5m]) > 10
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "事件发布失败"
+          description: "5分钟内事件发布失败次数: {{ $value }}, 超过10次阈值"
+
+      # 服务不可用告警
+      - alert: GatewayDown
+        expr: up{job="charge-point-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "网关服务不可用"
+          description: "网关服务已停止响应超过1分钟"
+
+      # 内存使用告警
+      - alert: HighMemoryUsage
+        expr: (container_memory_usage_bytes{name="gateway"} / container_spec_memory_limit_bytes{name="gateway"}) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "网关内存使用率过高"
+          description: "内存使用率: {{ $value | humanizePercentage }}, 超过80%阈值"
+
+      # CPU使用告警
+      - alert: HighCPUUsage
+        expr: rate(container_cpu_usage_seconds_total{name="gateway"}[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "网关CPU使用率过高"
+          description: "CPU使用率: {{ $value | humanizePercentage }}, 超过80%阈值"
+
+  - name: infrastructure.rules
+    rules:
+      # Redis连接告警
+      - alert: RedisDown
+        expr: up{job="redis"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Redis服务不可用"
+          description: "Redis服务已停止响应超过1分钟"
+
+      # Kafka连接告警
+      - alert: KafkaDown
+        expr: up{job="kafka"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kafka服务不可用"
+          description: "Kafka服务已停止响应超过1分钟"
+
+      # 磁盘空间告警
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) < 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "磁盘空间不足"
+          description: "可用磁盘空间: {{ $value | humanizePercentage }}, 低于10%阈值"

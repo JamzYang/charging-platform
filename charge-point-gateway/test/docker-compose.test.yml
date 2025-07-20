@@ -96,7 +96,7 @@ services:
       # 挂载整个configs目录，让应用可以访问所有配置文件
       - ../configs:/app/configs:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -135,8 +135,158 @@ services:
     profiles:
       - debug
 
+  # ==================== 监控服务 ====================
+  # 使用 --profile monitoring 启动监控服务
+
+  # Prometheus 监控服务
+  prometheus:
+    image: prom/prometheus:v2.47.0
+    container_name: prometheus-test
+    ports:
+      - "9090:9090"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+    restart: unless-stopped
+    networks:
+      - test-network
+    profiles:
+      - monitoring
+
+  # Grafana 可视化界面
+  grafana:
+    image: grafana/grafana:10.1.0
+    container_name: grafana-test
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    restart: unless-stopped
+    networks:
+      - test-network
+    depends_on:
+      - prometheus
+    profiles:
+      - monitoring
+
+  # Node Exporter (系统指标)
+  node-exporter:
+    image: prom/node-exporter:v1.6.1
+    container_name: node-exporter-test
+    ports:
+      - "9101:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    restart: unless-stopped
+    networks:
+      - test-network
+    profiles:
+      - monitoring
+
+  # cAdvisor (容器指标)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.2
+    container_name: cadvisor-test
+    ports:
+      - "8085:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    restart: unless-stopped
+    networks:
+      - test-network
+    profiles:
+      - monitoring
+
+  # Redis Exporter (Redis指标)
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.54.0
+    container_name: redis-exporter-test
+    ports:
+      - "9121:9121"
+    environment:
+      - REDIS_ADDR=redis-test:6379
+    restart: unless-stopped
+    networks:
+      - test-network
+    depends_on:
+      - redis-test
+    profiles:
+      - monitoring
+
+  # Kafka Exporter (Kafka指标)
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.6.0
+    container_name: kafka-exporter-test
+    ports:
+      - "9308:9308"
+    command:
+      - '--kafka.server=kafka-test:9092'
+    restart: unless-stopped
+    networks:
+      - test-network
+    depends_on:
+      - kafka-test
+    profiles:
+      - monitoring
+
+  # AlertManager (告警管理)
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    container_name: alertmanager-test
+    ports:
+      - "9093:9093"
+    volumes:
+      - ../monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+    restart: unless-stopped
+    networks:
+      - test-network
+    profiles:
+      - monitoring
+
 volumes:
   redis-test-data:
+    driver: local
+  # 监控数据卷
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+  alertmanager-data:
     driver: local
 
 networks:
