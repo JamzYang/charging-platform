@@ -12,9 +12,7 @@ import (
 	"github.com/charging-platform/charge-point-gateway/internal/domain/protocol"
 	"github.com/charging-platform/charge-point-gateway/internal/gateway"
 	"github.com/charging-platform/charge-point-gateway/internal/logger"
-	"github.com/charging-platform/charge-point-gateway/internal/message"
 	"github.com/charging-platform/charge-point-gateway/internal/metrics"
-	"github.com/charging-platform/charge-point-gateway/internal/protocol/ocpp16"
 	"github.com/gorilla/websocket"
 )
 
@@ -711,31 +709,10 @@ func (m *Manager) SendMessage(chargePointID string, message []byte) error {
 	return wrapper.SendMessage(message)
 }
 
-// SendCommand 发送指令（用于下行指令处理）
-func (m *Manager) SendCommand(chargePointID string, cmd interface{}) error {
-	// 将通用的 Command 结构转换为 OCPP Call 格式
-	// [2, messageId, action, payload]
-	var ocppCall []interface{}
-
-	if command, ok := cmd.(*message.Command); ok {
-		ocppCall = []interface{}{
-			2, // MessageType Call
-			// 为下行指令动态生成唯一的MessageID
-			fmt.Sprintf("gw-%d", time.Now().UnixNano()),
-			command.CommandName,
-			command.Payload,
-		}
-	} else {
-		return fmt.Errorf("unsupported command type: %T", cmd)
-	}
-
-	// 将OCPP Call序列化为JSON
-	messageBytes, err := json.Marshal(ocppCall)
-	if err != nil {
-		return fmt.Errorf("failed to marshal OCPP call: %w", err)
-	}
-
-	return m.SendMessage(chargePointID, messageBytes)
+// SendRawMessage 发送原始消息（纯传输层功能）
+// 这个方法只负责消息传输，不涉及任何协议处理
+func (m *Manager) SendRawMessage(chargePointID string, message []byte) error {
+	return m.SendMessage(chargePointID, message)
 }
 
 // GetEventChannel 获取事件通道
@@ -909,33 +886,17 @@ func (w *ConnectionWrapper) handleMessage(message []byte) {
 
 	w.logger.Debugf("WEBSOCKET: Successfully dispatched message from %s", w.chargePointID)
 
-	// 如果有响应，则发送回客户端
+	// 如果处理器返回了响应数据，则发送回客户端
+	// 注意：响应数据应该已经是完整的协议格式（由处理器负责格式化）
 	if response != nil {
-		// 将内部响应转换为OCPP 1.6 CallResult格式: [3, messageId, payload]
-		if procResponse, ok := response.(*ocpp16.ProcessorResponse); ok && procResponse.Success {
-			ocppResponse := []interface{}{
-				3, // MessageType CallResult
-				procResponse.MessageID,
-				procResponse.Payload,
-			}
-
-			responseBytes, err := json.Marshal(ocppResponse)
-			if err != nil {
-				w.logger.Errorf("WEBSOCKET: Failed to marshal OCPP response for %s: %v", w.chargePointID, err)
-				return
-			}
-
-			// 发送响应
+		if responseBytes, ok := response.([]byte); ok {
 			if err := w.SendMessage(responseBytes); err != nil {
-				w.logger.Errorf("WEBSOCKET: Failed to send OCPP response to %s: %v", w.chargePointID, err)
+				w.logger.Errorf("WEBSOCKET: Failed to send response to %s: %v", w.chargePointID, err)
 			} else {
-				w.logger.Debugf("WEBSOCKET: Successfully sent OCPP response to %s", w.chargePointID)
+				w.logger.Debugf("WEBSOCKET: Successfully sent response to %s", w.chargePointID)
 			}
-		} else if procResponse, ok := response.(*ocpp16.ProcessorResponse); ok && !procResponse.Success {
-			// TODO: Handle CallError message creation
-			w.logger.Warnf("WEBSOCKET: Received a failed processor response for %s, but error handling is not implemented.", w.chargePointID)
 		} else {
-			w.logger.Warnf("WEBSOCKET: Received an unexpected response type for %s: %T", w.chargePointID, response)
+			w.logger.Errorf("WEBSOCKET: Invalid response type from processor for %s: %T", w.chargePointID, response)
 		}
 	}
 }

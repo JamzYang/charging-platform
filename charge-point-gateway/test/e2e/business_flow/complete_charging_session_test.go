@@ -107,9 +107,39 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 	utils.AssertEventuallyTrue(t, func() bool {
 		select {
 		case kafkaMessage := <-partitionConsumer.Messages():
-			event := utils.AssertKafkaMessage(t, kafkaMessage.Value, "device.status")
-			eventPayload := event["payload"].(map[string]interface{})
-			return eventPayload["status"].(string) == "Charging"
+			// 先跳过BootNotification产生的charge_point.connected事件
+			var event map[string]interface{}
+			err := json.Unmarshal(kafkaMessage.Value, &event)
+			if err != nil {
+				return false
+			}
+
+			eventType, ok := event["type"].(string)
+			if !ok {
+				return false
+			}
+
+			// 跳过charge_point.connected事件，寻找connector.status_changed事件
+			if eventType == "charge_point.connected" {
+				return false
+			}
+
+			if eventType == "connector.status_changed" {
+				// 直接从事件根级别获取connector_info
+				connectorInfo, ok := event["connector_info"].(map[string]interface{})
+				if !ok {
+					return false
+				}
+
+				status, ok := connectorInfo["status"].(string)
+				if !ok {
+					return false
+				}
+
+				return status == "charging" // 注意：状态值是小写的"charging"
+			}
+
+			return false
 		case <-time.After(100 * time.Millisecond):
 			return false
 		}
@@ -250,14 +280,14 @@ func TestTC_E2E_03_CompleteChargingSession(t *testing.T) {
 	stopTransactionPayload := map[string]interface{}{
 		"transactionId": 12345,
 		"timestamp":     time.Now().Format(time.RFC3339),
-		"meterStop":     1237.56,
+		"meterStop":     1238, // 使用整数而不是浮点数
 		"reason":        "Remote",
 		"transactionData": []map[string]interface{}{
 			{
 				"timestamp": time.Now().Format(time.RFC3339),
 				"sampledValue": []map[string]interface{}{
 					{
-						"value":     "1237.56",
+						"value":     "1238.00",
 						"measurand": "Energy.Active.Import.Register",
 						"unit":      "kWh",
 					},

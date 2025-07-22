@@ -36,7 +36,7 @@ graph TD
             APIPod1["API Pod 1"]
             APIPod2["API Pod 2"]
         end
-        
+
         subgraph "充电桩网关服务"
             GatewayService["Gateway Service (LoadBalancer)"]
             GatewayPod1["Gateway Pod 1"]
@@ -61,11 +61,12 @@ graph TD
 *   **L7 负载均衡器**: 由 `Ingress Controller` (如 Nginx, Traefik) 负责管理。负责处理所有后端的 HTTP/HTTPS 流量，提供基于域名和路径的智能路由。
 *   **Gateway Pods**:
     *   无状态的网关应用实例，是整个网关的核心逻辑载体。
-    *   **连接管理**: 维护与充电桩的 WebSocket 长连接。
+    *   **连接管理**: 维护与充电桩的 WebSocket 长连接，提供纯粹的消息传输服务。
     *   **消息分发与版本处理**: 内部分层，包含一个统一的 **消息分发器**，以及针对不同 OCPP 版本（如 1.6J, 2.0.1）的 **版本处理器 (Version Handler)**。
     *   **协议转换**: 版本处理器负责解析特定版本的 OCPP 消息，并调用 **统一业务模型转换器 (Unified Model Converter)**，将其转换为平台内部标准的业务事件（如 `DeviceOnlineEvent`, `MeterValuesEvent`）。
     *   **消息发布**: 将转换后的标准业务事件发布到 Kafka 的上行主题。
     *   **指令消费**: 订阅属于自己的下行指令 Kafka 主题，并将标准指令通过“版本处理器”逆向转换为特定版本的 OCPP 消息后下发。
+    *   **统一消息处理**: 采用统一消息处理模式，版本处理器负责所有OCPP消息（上行和下行）的生命周期管理，包括消息ID生成、pending request管理和响应匹配。
 *   **API Pods**: 后端业务逻辑服务，如用户、订单、计费等。
 *   **Redis Cluster**: 作为分布式状态存储，核心是存储充电桩与 Gateway Pod 的动态映射关系，为下行指令路由提供支持。
 *   **Kafka Cluster**: 作为系统的消息总线，解耦上行数据流和下行指令流。
@@ -88,22 +89,22 @@ sequenceDiagram
     participant BE as Backend Service
 
     CP->>Pod: 1. 发送 OCPP 消息 (e.g., BootNotification)
-    
+
     Pod->>Pod: 2. 消息分发器识别版本
     note right of Pod: 根据连接元数据<br/>将消息路由到对应处理器
-    
+
     Pod->>H16: 3. 转交 1.6J 处理器
-    
+
     H16->>H16: 4. 按 1.6J 规范解析和验证消息
-    
+
     H16->>UM: 5. 调用转换器, 传入 1.6J 数据
-    
+
     UM->>UM: 6. 生成统一业务事件 (e.g., DeviceOnlineEvent)
-    
+
     UM->>Kafka: 7. 异步发布标准事件
-    
+
     Kafka-->>BE: 8. 消费事件并处理业务
-    
+
     note over H16, CP: 同时, H16 会生成同步的<br/>RPC 响应并返回给充电桩
 ```
 
@@ -130,7 +131,7 @@ sequenceDiagram
 3.  **指令处理**:
     *   每个 Gateway Pod 在启动时，会根据自己的 Pod ID 计算出自己负责消费的特定分区范围。
     *   只有负责该 `partition_id` 的 Gateway Pod 会订阅并收到这条指令。
-    *   该 Gateway Pod 收到后，通过内存中的 WebSocket 连接句柄，将指令准确下发给 `CP-007`。
+    *   该 Gateway Pod 收到后，通过**统一消息处理模式**将指令准确下发给 `CP-007`。
 
 **时序图**:
 
@@ -144,13 +145,13 @@ sequenceDiagram
 
     BE->>Redis: 1. 查询 GET conn:CP-007
     Redis-->>BE: 2. 返回 "gateway-pod-xyz"
-    
+
     BE->>BE: 3. 计算目标分区: partition_id = hash("gateway-pod-xyz") % N
-    
+
     BE->>Kafka: 4. 发布指令到主题 "commands-down", 指定分区 partition_id
-    
+
     Kafka-->>GatewayPod: 5. 消费指令 (仅负责该分区的Pod消费)
-    GatewayPod->>CP: 6. 发送指令
+    GatewayPod->>CP: 6. 通过统一消息处理模式发送指令
 ```
 
 ### 4.3. 节点故障转移 (Failover)
@@ -171,7 +172,7 @@ sequenceDiagram
 
     K8s--xPod1: 1. Kubelet 健康检查失败
     note right of K8s: 将 Pod1 标记为不健康<br/>并从 Service 端点中移除
-    
+
     CP--xPod1: 2. TCP 连接断开
 
     CP->>K8s: 3. 发起重连请求 (访问 Service IP)
@@ -179,7 +180,7 @@ sequenceDiagram
 
     Pod2->>CP: 5. 建立新 WebSocket 连接
     CP->>Pod2: 6. 发送 BootNotification
-    
+
     Pod2->>Pod2: 7. 处理启动逻辑...
     Pod2->>Redis: 8. **更新连接映射 SET conn:CP-007 "pod-2"**
     note right of Pod2: 这是应用代码层面<br/>必须实现的关键逻辑！
@@ -360,22 +361,147 @@ sequenceDiagram
 - `handleSuccesses()`: 处理发送成功回调
 - `handleErrors()`: 处理发送失败回调
 
-#### 6.3.3. 数据流特点
+#### 6.3.3. 下行指令处理完整流程（统一消息处理模式）
+
+```mermaid
+sequenceDiagram
+    participant KC as Kafka消费者<br/>(KafkaConsumer)
+    participant PH as 协议处理器<br/>(ProtocolHandler)
+    participant WM as WebSocket管理器<br/>(Manager)
+    participant CW as 连接包装器<br/>(ConnectionWrapper)
+    participant CP as 充电桩客户端
+
+    Note over KC,CP: 1. 下行指令接收和处理阶段
+    KC->>PH: 1. 接收Kafka下行指令<br/>SendDownlinkCommand(chargePointID, action, payload)
+    PH->>PH: 2. 生成唯一消息ID<br/>messageID = "gw-" + timestamp
+    PH->>PH: 3. 注册pending request<br/>pendingRequests[messageID] = request
+    PH->>PH: 4. 构造OCPP Call消息<br/>[2, messageID, action, payload]
+
+    Note over KC,CP: 2. 消息发送阶段
+    PH->>WM: 5. SendRawMessage(chargePointID, messageBytes)
+    WM->>CW: 6. 查找连接并发送<br/>wrapper.SendMessage(messageBytes)
+    CW->>CP: 7. WebSocket发送OCPP消息
+
+    Note over KC,CP: 3. 响应接收和处理阶段
+    CP->>CW: 8. 返回OCPP响应<br/>[3, messageID, responsePayload]
+    CW->>WM: 9. 接收响应消息
+    WM->>PH: 10. 直接路由到协议处理器<br/>ProcessMessage(chargePointID, responseBytes)
+    PH->>PH: 11. 解析响应消息类型<br/>messageType=3 (CallResult)
+    PH->>PH: 12. 查找pending request<br/>pendingRequests[messageID]
+    PH->>PH: 13. 匹配成功，处理响应<br/>发送到ResponseChan
+    PH->>PH: 14. 清理pending request<br/>delete(pendingRequests, messageID)
+
+    Note over KC,CP: 4. 完成下行指令生命周期
+```
+
+#### 6.3.4. 数据流特点
 
 1. **双路径设计**: 消息同时通过直接分发器调用和事件通道，确保处理效率和监控完整性
 2. **异步处理**: Kafka发送采用异步模式，不阻塞WebSocket响应
 3. **协议无关**: 分发器支持多协议版本，便于扩展
 4. **错误隔离**: 各组件独立处理错误，避免级联失败
 5. **可观测性**: 完整的事件链路便于监控和调试
+6. **统一生命周期**: 上行和下行消息都通过协议处理器进行统一的生命周期管理
 
 
 ---
 
-## 7. 架构风险评估与缓解
+## 7. 统一消息处理模式设计
+
+### 7.1. 设计背景与问题分析
+
+在实际实现过程中，我们发现原有的上行和下行消息处理存在架构不对称性问题：
+
+**上行消息处理**：充电桩 → WebSocket → 分发器 → OCPP处理器 → 业务逻辑 → 响应返回
+- 单一组件（OCPP处理器）负责完整的请求-响应生命周期
+- 状态管理集中，消息ID和pending request统一管理
+
+**下行消息处理**：Kafka → 消费者 → WebSocket管理器 → 充电桩 → 响应 → 分发器 → OCPP处理器
+- 发送在WebSocket管理器，响应处理在OCPP处理器
+- 消息ID在WebSocket管理器生成，pending request管理在OCPP处理器
+- 状态管理分离，导致"no pending request found"错误
+
+### 7.2. 统一消息处理模式
+
+**核心思想**：让OCPP处理器成为所有OCPP消息的统一入口和出口，确保上行和下行消息处理的一致性。
+
+#### 7.2.1. 架构原则
+
+1. **统一入口**：所有OCPP消息（上行和下行）都通过OCPP处理器
+2. **统一状态管理**：消息ID生成和pending request管理都在处理器中
+3. **清晰职责**：WebSocket管理器只负责传输，不涉及协议细节
+4. **一致性保证**：上行和下行使用相同的消息生命周期管理
+
+#### 7.2.2. 下行指令处理流程
+
+```mermaid
+sequenceDiagram
+    participant Kafka as Kafka消费者
+    participant Processor as OCPP处理器
+    participant WS as WebSocket管理器
+    participant CP as 充电桩
+
+    Note over Kafka,CP: 下行指令发送流程
+    Kafka->>Processor: 1. 接收下行指令
+    Processor->>Processor: 2. 生成消息ID
+    Processor->>Processor: 3. 注册pending request
+    Processor->>Processor: 4. 构造OCPP消息格式
+    Processor->>WS: 5. 请求发送原始消息
+    WS->>CP: 6. 发送OCPP消息
+
+    Note over Kafka,CP: 响应处理流程
+    CP->>WS: 7. 返回响应
+    WS->>Processor: 8. 直接路由到处理器
+    Processor->>Processor: 9. 匹配pending request
+    Processor->>Processor: 10. 清理状态，完成生命周期
+```
+
+#### 7.2.3. 关键组件职责重新定义
+
+**OCPP处理器 (Processor)**：
+- 所有OCPP消息的统一管理者
+- 消息ID生成和pending request生命周期管理
+- 上行消息的业务逻辑处理
+- 下行指令的发送协调和响应处理
+
+**WebSocket管理器 (Manager)**：
+- 纯粹的消息传输层
+- 连接管理和心跳维护
+- 协议无关的原始消息收发
+- 移除OCPP协议相关的格式化逻辑
+
+**消息分发器 (Dispatcher)**：
+- 版本识别和路由
+- 将所有消息（上行和下行响应）路由到对应的处理器
+
+
+
+
+
+### 7.4. 架构优势
+
+1. **一致性**：上行和下行消息处理模式完全一致
+2. **可测试性**：状态管理集中，便于单元测试和集成测试
+3. **可维护性**：职责清晰，修改影响范围可控
+4. **可扩展性**：支持多协议版本，处理器可以独立演进
+5. **故障恢复**：pending request状态集中管理，便于故障转移时的状态恢复
+
+### 7.5. 与原架构的兼容性
+
+这个统一消息处理模式与原有架构设计的核心原则完全兼容：
+
+1. **分层解耦**：各层职责更加清晰，耦合度降低
+2. **消息驱动**：保持异步处理模式不变
+3. **无状态网关**：状态管理集中在处理器中，便于Pod故障转移
+4. **云原生优先**：不影响Kubernetes的自愈和扩展能力
+
+---
+
+## 8. 架构风险评估与缓解
 
 本章节整合了对当前充电桩网关架构设计的批判性审视，识别并分析其中存在的关键风险点和潜在的不合理之处。理解这些风险有助于我们在实施阶段进行更精细的设计和更全面的考量。
 
-### 7.1. 风险评估矩阵
+### 8.1. 风险评估矩阵
 
 | 风险ID | 风险描述 | 风险等级 | 影响程度 | 发生概率 | 优先级 |
 |--------|----------|----------|----------|----------|--------|
@@ -386,12 +512,38 @@ sequenceDiagram
 | R005 | 监控和可观测性不足 | 中 | 中 | 高 | P3 |
 | R006 | 安全性设计缺失 | 中 | 高 | 低 | P3 |
 | R007 | 技术选型潜在问题 | 中 | 低 | 中 | P4 |
+| R008 | 上行下行消息处理不一致性 | 高 | 高 | 高 | P1 |
 
-### 7.2. 详细风险分析
+### 8.2. 详细风险分析
+
+#### 🚨 R008: 上行下行消息处理不一致性风险 (高) - **已通过统一消息处理模式解决**
+
+**风险描述**:
+原有架构中上行和下行消息处理存在不对称性，导致状态管理分离和pending request匹配失败。
+
+**业务影响**:
+- 下行指令响应处理失败，出现"no pending request found"错误
+- 系统可靠性下降，用户体验受影响
+- 调试和维护困难
+
+**技术影响**:
+- 消息生命周期管理混乱
+- 组件职责边界模糊
+- 代码可测试性和可维护性差
+
+**解决方案 - 统一消息处理模式**:
+1. **统一入口**: 所有OCPP消息通过协议处理器统一管理
+2. **统一状态管理**: 消息ID生成和pending request管理集中在处理器中
+3. **清晰职责**: WebSocket管理器只负责传输，协议处理器负责所有OCPP逻辑
+4. **一致性保证**: 上行和下行使用相同的消息生命周期管理模式
+
+**实施状态**: ✅ 已在架构设计中完成，待代码实现
+
+### 8.3. 原有风险分析
 
 #### 🚨 R001: 故障转移期间指令丢失风险 (严重)
 
-**风险描述**: 
+**风险描述**:
 在Gateway Pod故障转移过程中，存在一个"指令黑洞窗口期"。当充电桩正在重连但Redis映射尚未更新时，后端发送的指令会路由到已故障的Pod，导致指令永久丢失。
 
 **业务影响**:
@@ -565,6 +717,41 @@ T4: 指令路由混乱
 4.  **小步快跑**: 初期选择核心功能进行迭代开发，逐步积累经验。
 5.  **社区参与**: 积极关注 Go 社区和所选库的更新，及时获取支持。
 
-## 8. 总结
+## 9. 总结
 
-这份风险评估报告是对我们架构设计的一次重要补充。通过系统性地识别和分析这些风险，并制定相应的缓解策略，我们可以构建一个更加健壮、可靠和安全的充电桩网关系统。这些风险点将指导我们在后续的实施和运维阶段进行更精细的考量和投入。
+### 9.1. 架构演进成果
+
+本文档在原有高可用网关架构基础上，重点补充了**统一消息处理模式**的设计，解决了实际实现过程中发现的关键问题：
+
+1. **问题识别**: 发现了上行和下行消息处理的不对称性问题，这是导致"no pending request found"错误的根本原因
+2. **方案设计**: 提出了统一消息处理模式，让OCPP处理器成为所有OCPP消息的统一管理者
+3. **架构优化**: 明确了各组件的职责边界，提升了系统的一致性和可维护性
+
+### 9.2. 核心价值
+
+**统一消息处理模式**为充电桩网关系统带来了以下核心价值：
+
+1. **一致性**: 上行和下行消息处理模式完全统一，消除了架构不对称性
+2. **可靠性**: 集中的消息生命周期管理，确保请求-响应的正确匹配
+3. **可维护性**: 清晰的职责分工，降低了系统复杂度
+4. **可扩展性**: 支持多协议版本，便于未来功能扩展
+5. **可测试性**: 状态管理集中，便于单元测试和集成测试
+
+### 9.3. 实施指导
+
+这份架构设计为后续的代码实现提供了明确的指导：
+
+1. **组件重构**: 需要重构WebSocket管理器和OCPP处理器的接口
+2. **状态管理**: 实现统一的pending request管理机制
+3. **测试策略**: 重点测试下行指令的完整生命周期
+4. **监控完善**: 建立完整的消息处理链路监控
+
+### 9.4. 风险缓解
+
+通过统一消息处理模式和系统性的风险分析，我们有效缓解了多个关键风险：
+
+- **R008**: 消息处理不一致性风险已通过架构设计解决
+- **R001**: 故障转移风险通过集中状态管理得到改善
+- **R003**: 连接映射一致性通过统一处理得到保障
+
+这份完整的架构设计为构建一个健壮、可靠、可扩展的充电桩网关系统奠定了坚实的基础。

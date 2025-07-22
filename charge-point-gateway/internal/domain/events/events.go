@@ -151,14 +151,14 @@ func (e *ChargePointRegisteredEvent) ToJSON() ([]byte, error) {
 // ConnectorStatusChangedEvent 连接器状态变更事件
 type ConnectorStatusChangedEvent struct {
 	*BaseEvent
-	ConnectorInfo ConnectorInfo     `json:"connector_info"`
-	PreviousStatus ConnectorStatus  `json:"previous_status"`
+	ConnectorInfo  ConnectorInfo   `json:"connector_info"`
+	PreviousStatus ConnectorStatus `json:"previous_status"`
 }
 
 // GetPayload 实现Event接口
 func (e *ConnectorStatusChangedEvent) GetPayload() interface{} {
 	return map[string]interface{}{
-		"connector_info":   e.ConnectorInfo,
+		"connector_info":  e.ConnectorInfo,
 		"previous_status": e.PreviousStatus,
 	}
 }
@@ -211,9 +211,9 @@ func (e *TransactionStoppedEvent) ToJSON() ([]byte, error) {
 // MeterValuesReceivedEvent 电表值接收事件
 type MeterValuesReceivedEvent struct {
 	*BaseEvent
-	ConnectorID     int           `json:"connector_id"`
-	TransactionID   *int          `json:"transaction_id,omitempty"`
-	MeterValues     []MeterValue  `json:"meter_values"`
+	ConnectorID   int          `json:"connector_id"`
+	TransactionID *int         `json:"transaction_id,omitempty"`
+	MeterValues   []MeterValue `json:"meter_values"`
 }
 
 // GetPayload 实现Event接口
@@ -315,7 +315,7 @@ func (e *DataTransferReceivedEvent) ToJSON() ([]byte, error) {
 // ProtocolErrorEvent 协议错误事件
 type ProtocolErrorEvent struct {
 	*BaseEvent
-	ErrorInfo     ErrorInfo `json:"error_info"`
+	ErrorInfo       ErrorInfo   `json:"error_info"`
 	OriginalMessage interface{} `json:"original_message,omitempty"`
 }
 
@@ -363,6 +363,25 @@ func (f *EventFactory) CreateTransactionStartedEvent(chargePointID string, trans
 		BaseEvent:         NewBaseEvent(EventTypeTransactionStarted, chargePointID, EventSeverityInfo, metadata),
 		TransactionInfo:   transactionInfo,
 		AuthorizationInfo: authInfo,
+	}
+}
+
+// CreateMeterValuesReceivedEvent 创建电表值接收事件
+func (f *EventFactory) CreateMeterValuesReceivedEvent(chargePointID string, connectorID int, transactionID *int, meterValues []MeterValue, metadata Metadata) *MeterValuesReceivedEvent {
+	return &MeterValuesReceivedEvent{
+		BaseEvent:     NewBaseEvent(EventTypeMeterValuesReceived, chargePointID, EventSeverityInfo, metadata),
+		ConnectorID:   connectorID,
+		TransactionID: transactionID,
+		MeterValues:   meterValues,
+	}
+}
+
+// CreateTransactionStoppedEvent 创建交易停止事件
+func (f *EventFactory) CreateTransactionStoppedEvent(chargePointID string, transactionInfo TransactionInfo, meterValues []MeterValue, metadata Metadata) *TransactionStoppedEvent {
+	return &TransactionStoppedEvent{
+		BaseEvent:       NewBaseEvent(EventTypeTransactionStopped, chargePointID, EventSeverityInfo, metadata),
+		TransactionInfo: transactionInfo,
+		MeterValues:     meterValues,
 	}
 }
 

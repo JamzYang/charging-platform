@@ -221,21 +221,26 @@ func AssertDeviceOnlineEvent(t *testing.T, message []byte, expectedChargePointID
 
 // AssertMeterValuesEvent 断言计量数据事件
 func AssertMeterValuesEvent(t *testing.T, message []byte, expectedChargePointID string) {
-	event := AssertKafkaMessage(t, message, "meter.values")
+	event := AssertKafkaMessage(t, message, "meter_values.received")
 
 	// 检查充电桩ID
 	chargePointID, ok := event["charge_point_id"].(string)
 	require.True(t, ok, "Charge point ID should be a string")
 	assert.Equal(t, expectedChargePointID, chargePointID, "Charge point ID mismatch")
 
-	// 检查载荷
-	assert.Contains(t, event, "payload", "Event should have payload")
-	payload, ok := event["payload"].(map[string]interface{})
-	require.True(t, ok, "Payload should be an object")
+	// 检查计量数据 - 直接从事件根级别读取
+	assert.Contains(t, event, "connector_id", "Event should contain connector ID")
+	assert.Contains(t, event, "meter_values", "Event should contain meter values")
 
-	// 检查计量数据
-	assert.Contains(t, payload, "connector_id", "Payload should contain connector ID")
-	assert.Contains(t, payload, "meter_values", "Payload should contain meter values")
+	// 验证连接器ID
+	connectorID, ok := event["connector_id"].(float64)
+	require.True(t, ok, "Connector ID should be a number")
+	assert.Greater(t, connectorID, float64(0), "Connector ID should be positive")
+
+	// 验证计量数据
+	meterValues, ok := event["meter_values"].([]interface{})
+	require.True(t, ok, "Meter values should be an array")
+	assert.NotEmpty(t, meterValues, "Meter values should not be empty")
 }
 
 // ReceiveMessageWithTimeout 尝试在给定的超时时间内接收一条消息

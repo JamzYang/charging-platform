@@ -72,10 +72,10 @@ func main() {
 	converter := gateway.NewUnifiedModelConverter(gateway.DefaultConverterConfig())
 	log.Info("Model converter initialized")
 
-	// 7. 初始化 OCPP 1.6 处理器
+	// 7. 初始化 OCPP 1.6 处理器（暂时不传入messageSender，稍后设置）
 	processorConfig := ocpp16.DefaultProcessorConfig()
 	processorConfig.WorkerCount = cfg.OCPP.WorkerCount // 使用配置文件中的Worker数量
-	processor := ocpp16.NewProcessor(processorConfig, cfg.PodID, storage, log)
+	processor := ocpp16.NewProcessor(processorConfig, cfg.PodID, storage, nil, log)
 	log.Infof("OCPP 1.6 processor initialized with %d workers", cfg.OCPP.WorkerCount)
 
 	// 8. 初始化中央消息分发器
@@ -116,18 +116,22 @@ func main() {
 	log.Info("WebSocket manager initialized with dispatcher")
 	log.Info("WebSocket manager initialized")
 
+	// 设置processor的消息发送器（实现统一消息处理模式）
+	processor.SetMessageSender(wsManager)
+	log.Info("Processor message sender configured")
+
 	// 启动全局Ping服务 - 减少Goroutine数量的优化
 	wsManager.StartGlobalPingService()
 	log.Info("Global ping service started")
 
-	// 10. 定义下行指令处理器
+	// 10. 定义下行指令处理器（统一消息处理模式）
 	commandHandler := func(cmd *message.Command) {
 		log.Infof("Received command for charge point %s: %s", cmd.ChargePointID, cmd.CommandName)
-		if err := wsManager.SendCommand(cmd.ChargePointID, cmd); err != nil {
+		if err := processor.SendDownlinkCommand(cmd.ChargePointID, cmd.CommandName, cmd.Payload); err != nil {
 			log.Errorf("Failed to send command to %s: %v", cmd.ChargePointID, err)
 		}
 	}
-	log.Info("Command handler defined")
+	log.Info("Command handler defined (using unified message processing)")
 
 	// 11. 启动服务
 	// 启动监控服务器
@@ -190,6 +194,30 @@ func main() {
 		log.Infof("Optimized server listening on %s with enhanced backlog", listener.Addr().String())
 		if err := server.Serve(listener); err != nil {
 			log.Fatalf("Main server failed: %v", err)
+		}
+	}()
+
+	// 启动业务事件处理器 - 将分发器的事件发送到Kafka
+	go func() {
+		log.Info("Business event handler started")
+		for event := range dispatcher.GetEventChannel() {
+			if err := producer.PublishEvent(event); err != nil {
+				log.Errorf("Failed to publish event to Kafka: %v", err)
+			} else {
+				log.Debugf("Published event %s from charge point %s to Kafka", event.GetType(), event.GetChargePointID())
+			}
+		}
+	}()
+
+	// 启动业务事件处理器 - 将分发器的事件发送到Kafka
+	go func() {
+		log.Info("Business event handler started")
+		for event := range dispatcher.GetEventChannel() {
+			if err := producer.PublishEvent(event); err != nil {
+				log.Errorf("Failed to publish event to Kafka: %v", err)
+			} else {
+				log.Debugf("Published event %s from charge point %s to Kafka", event.GetType(), event.GetChargePointID())
+			}
 		}
 	}()
 

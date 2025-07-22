@@ -450,7 +450,9 @@ services:
     ports:
       - "9308:9308"
     command:
-      - '--kafka.server=kafka-test:9092'
+      - '--kafka.server=kafka-test:29092'
+      - '--log.level=debug'
+      - '--verbosity=1'
     restart: unless-stopped
     networks:
       - test-network

@@ -46,7 +46,7 @@ kafka:
 
 # 日志配置 - 测试环境
 log:
-  level: "warn"
+  level: "debug"
   format: "json"  # 测试环境使用JSON格式便于日志收集
   output: "stdout"
   async: true

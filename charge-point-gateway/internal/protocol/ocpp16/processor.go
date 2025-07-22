@@ -15,6 +15,11 @@ import (
 	"github.com/charging-platform/charge-point-gateway/internal/storage"
 )
 
+// MessageSender 定义发送消息的接口，避免循环依赖
+type MessageSender interface {
+	SendMessage(chargePointID string, message []byte) error
+}
+
 // Processor OCPP 1.6消息处理器
 type Processor struct {
 	// 核心组件
@@ -43,6 +48,9 @@ type Processor struct {
 	// 故障转移相关
 	podID   string
 	storage storage.ConnectionStorage // 引入 storage 接口
+
+	// 消息发送器 - 用于下行指令发送
+	messageSender MessageSender
 }
 
 // ProcessorConfig 处理器配置
@@ -115,7 +123,7 @@ type ProcessorRequest struct {
 }
 
 // NewProcessor 创建新的OCPP消息处理器
-func NewProcessor(config *ProcessorConfig, podID string, storage storage.ConnectionStorage, log *logger.Logger) *Processor {
+func NewProcessor(config *ProcessorConfig, podID string, storage storage.ConnectionStorage, messageSender MessageSender, log *logger.Logger) *Processor {
 	if config == nil {
 		config = DefaultProcessorConfig()
 	}
@@ -139,6 +147,7 @@ func NewProcessor(config *ProcessorConfig, podID string, storage storage.Connect
 		logger:          log,
 		podID:           podID,
 		storage:         storage,
+		messageSender:   messageSender,
 	}
 }
 
@@ -186,7 +195,8 @@ func (p *Processor) Stop() error {
 }
 
 // ProcessMessage 处理OCPP消息
-func (p *Processor) ProcessMessage(chargePointID string, messageData []byte) (*ProcessorResponse, error) {
+// 返回 []byte 用于上行消息响应，nil 用于下行指令响应（无需回复）
+func (p *Processor) ProcessMessage(chargePointID string, messageData []byte) (interface{}, error) {
 	startTime := time.Now()
 
 	// 验证消息大小
@@ -227,8 +237,8 @@ func (p *Processor) ProcessMessage(chargePointID string, messageData []byte) (*P
 	}
 }
 
-// processCallMessage 处理Call消息
-func (p *Processor) processCallMessage(chargePointID, messageID, action string, payload json.RawMessage, startTime time.Time) (*ProcessorResponse, error) {
+// processCallMessage 处理Call消息（上行消息）
+func (p *Processor) processCallMessage(chargePointID, messageID, action string, payload json.RawMessage, startTime time.Time) (interface{}, error) {
 	p.logger.Debugf("Processing Call message: %s from %s", action, chargePointID)
 
 	// 创建payload实例
@@ -260,16 +270,25 @@ func (p *Processor) processCallMessage(chargePointID, messageID, action string, 
 		p.sendActionEvent(chargePointID, action, payloadInstance)
 	}
 
-	return &ProcessorResponse{
-		MessageID:   messageID,
-		Success:     true,
-		Payload:     responsePayload,
-		ProcessedAt: time.Now(),
-	}, nil
+	// 生成完整的OCPP CallResult响应: [3, messageId, payload]
+	ocppResponse := []interface{}{
+		3,               // MessageType CallResult
+		messageID,       // 消息ID
+		responsePayload, // 响应载荷
+	}
+
+	// 序列化为JSON
+	responseBytes, err := json.Marshal(ocppResponse)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal OCPP response: %w", err)
+	}
+
+	p.logger.Debugf("Generated OCPP response for %s action %s: %s", chargePointID, action, string(responseBytes))
+	return responseBytes, nil
 }
 
-// processCallResultMessage 处理CallResult消息
-func (p *Processor) processCallResultMessage(chargePointID, messageID string, payload json.RawMessage, startTime time.Time) (*ProcessorResponse, error) {
+// processCallResultMessage 处理CallResult消息（下行指令响应）
+func (p *Processor) processCallResultMessage(chargePointID, messageID string, payload json.RawMessage, startTime time.Time) (interface{}, error) {
 	p.logger.Debugf("Processing CallResult message: %s from %s", messageID, chargePointID)
 
 	// 查找待处理请求
@@ -292,7 +311,7 @@ func (p *Processor) processCallResultMessage(chargePointID, messageID string, pa
 		payloadInstance = payload
 	}
 
-	// 发送响应到等待的协程
+	// 创建响应对象
 	response := &ProcessorResponse{
 		MessageID:   messageID,
 		Success:     true,
@@ -300,22 +319,31 @@ func (p *Processor) processCallResultMessage(chargePointID, messageID string, pa
 		ProcessedAt: time.Now(),
 	}
 
+	// 尝试发送响应到等待的协程（如果有的话）
 	select {
 	case pendingReq.ResponseChan <- response:
+		p.logger.Debugf("Sent response to waiting goroutine for message ID %s", messageID)
 	default:
-		p.logger.Warn("Response channel full, dropping response")
+		// 对于下行指令，通常没有等待的协程，这是正常情况
+		p.logger.Debugf("No waiting goroutine for message ID %s (normal for downlink commands)", messageID)
 	}
+
+	// 记录下行指令响应成功
+	p.logger.Infof("Received successful response for downlink command %s from %s (message ID: %s)",
+		pendingReq.Action, chargePointID, messageID)
 
 	// 移除待处理请求
 	p.requestMutex.Lock()
 	delete(p.pendingRequests, messageID)
 	p.requestMutex.Unlock()
 
-	return response, nil
+	// 对于下行指令响应，我们不需要返回响应给WebSocket客户端
+	// 因为这本身就是对我们发送的指令的响应
+	return nil, nil
 }
 
-// processCallErrorMessage 处理CallError消息
-func (p *Processor) processCallErrorMessage(chargePointID, messageID string, payload json.RawMessage, startTime time.Time) (*ProcessorResponse, error) {
+// processCallErrorMessage 处理CallError消息（下行指令错误响应）
+func (p *Processor) processCallErrorMessage(chargePointID, messageID string, payload json.RawMessage, startTime time.Time) (interface{}, error) {
 	p.logger.Debugf("Processing CallError message: %s from %s", messageID, chargePointID)
 
 	// 解析错误payload
@@ -330,7 +358,7 @@ func (p *Processor) processCallErrorMessage(chargePointID, messageID string, pay
 	p.requestMutex.RUnlock()
 
 	if exists {
-		// 发送错误响应到等待的协程
+		// 创建错误响应对象
 		response := &ProcessorResponse{
 			MessageID:   messageID,
 			Success:     false,
@@ -338,24 +366,31 @@ func (p *Processor) processCallErrorMessage(chargePointID, messageID string, pay
 			ProcessedAt: time.Now(),
 		}
 
+		// 尝试发送错误响应到等待的协程（如果有的话）
 		select {
 		case pendingReq.ResponseChan <- response:
+			p.logger.Debugf("Sent error response to waiting goroutine for message ID %s", messageID)
 		default:
-			p.logger.Warn("Response channel full, dropping error response")
+			// 对于下行指令，通常没有等待的协程，这是正常情况
+			p.logger.Debugf("No waiting goroutine for error message ID %s (normal for downlink commands)", messageID)
 		}
+
+		// 记录下行指令错误响应
+		p.logger.Errorf("Received error response for downlink command %s from %s (message ID: %s): %v",
+			pendingReq.Action, chargePointID, messageID, errorPayload["errorDescription"])
 
 		// 移除待处理请求
 		p.requestMutex.Lock()
 		delete(p.pendingRequests, messageID)
 		p.requestMutex.Unlock()
-	}
 
-	return &ProcessorResponse{
-		MessageID:   messageID,
-		Success:     false,
-		Error:       fmt.Sprintf("OCPP error: %v", errorPayload["errorDescription"]),
-		ProcessedAt: time.Now(),
-	}, nil
+		// 对于下行指令的错误响应，我们不需要返回响应给WebSocket客户端
+		return nil, nil
+	} else {
+		// 如果没有找到pending request，记录警告但不返回错误
+		p.logger.Warnf("Received CallError for unknown message ID %s from %s", messageID, chargePointID)
+		return nil, nil
+	}
 }
 
 // GetEventChannel 获取事件通道
@@ -530,6 +565,65 @@ func (p *Processor) sendActionEvent(chargePointID, action string, payload interf
 			// 这里需要获取之前的状态，简化处理
 			event = p.eventFactory.CreateConnectorStatusChangedEvent(chargePointID, connectorInfo, events.ConnectorStatusAvailable, metadata)
 		}
+	case "MeterValues":
+		if req, ok := payload.(*ocpp16.MeterValuesRequest); ok {
+			// 转换电表数据
+			var meterValues []events.MeterValue
+			for _, mv := range req.MeterValue {
+				for _, sv := range mv.SampledValue {
+					meterValue := events.MeterValue{
+						Type:      events.MeterValueTypeEnergyActiveImport, // 简化处理，使用默认类型
+						Value:     sv.Value,
+						Timestamp: mv.Timestamp.Time,
+					}
+					meterValues = append(meterValues, meterValue)
+				}
+			}
+
+			event = p.eventFactory.CreateMeterValuesReceivedEvent(chargePointID, req.ConnectorId, req.TransactionId, meterValues, metadata)
+		}
+	case "StopTransaction":
+		if req, ok := payload.(*ocpp16.StopTransactionRequest); ok {
+			// 转换交易数据（如果有）
+			var transactionData []events.MeterValue
+			if req.TransactionData != nil {
+				for _, mv := range req.TransactionData {
+					for _, sv := range mv.SampledValue {
+						meterValue := events.MeterValue{
+							Type:      events.MeterValueTypeEnergyActiveImport, // 简化处理，使用默认类型
+							Value:     sv.Value,
+							Timestamp: mv.Timestamp.Time,
+						}
+						transactionData = append(transactionData, meterValue)
+					}
+				}
+			}
+
+			// 处理可选的IdTag
+			var idTag string
+			if req.IdTag != nil {
+				idTag = *req.IdTag
+			}
+
+			// 处理可选的停止原因
+			var stopReason *string
+			if req.Reason != nil {
+				reasonStr := string(*req.Reason)
+				stopReason = &reasonStr
+			}
+
+			// 创建交易信息
+			transactionInfo := events.TransactionInfo{
+				ID:            req.TransactionId,
+				ChargePointID: chargePointID,
+				IdTag:         idTag,
+				EndTime:       &req.Timestamp.Time,
+				MeterStop:     &req.MeterStop,
+				StopReason:    stopReason,
+			}
+
+			event = p.eventFactory.CreateTransactionStoppedEvent(chargePointID, transactionInfo, transactionData, metadata)
+		}
 	}
 
 	if event != nil {
@@ -642,4 +736,95 @@ func convertOCPPStatusToEventStatus(ocppStatus ocpp16.ChargePointStatus) events.
 	default:
 		return events.ConnectorStatusUnavailable
 	}
+}
+
+// SendDownlinkCommand 发送下行指令（统一消息处理模式的核心方法）
+func (p *Processor) SendDownlinkCommand(chargePointID, action string, payload interface{}) error {
+	if p.messageSender == nil {
+		return fmt.Errorf("message sender not configured")
+	}
+
+	// 1. 生成唯一消息ID
+	messageID := fmt.Sprintf("gw-%d", time.Now().UnixNano())
+	p.logger.Debugf("Generated message ID %s for downlink command %s to %s", messageID, action, chargePointID)
+
+	// 2. 注册pending request
+	if err := p.registerPendingRequest(messageID, chargePointID, action, payload); err != nil {
+		return fmt.Errorf("failed to register pending request: %w", err)
+	}
+
+	// 3. 构造OCPP Call消息 [2, messageId, action, payload]
+	ocppMessage := []interface{}{
+		2,         // MessageType Call
+		messageID, // 唯一消息ID
+		action,    // OCPP动作名称
+		payload,   // 载荷数据
+	}
+
+	// 4. 序列化为JSON
+	messageBytes, err := json.Marshal(ocppMessage)
+	if err != nil {
+		// 注册失败，需要清理pending request
+		p.removePendingRequest(messageID)
+		return fmt.Errorf("failed to marshal OCPP call: %w", err)
+	}
+
+	// 5. 通过WebSocket管理器发送原始消息
+	if err := p.messageSender.SendMessage(chargePointID, messageBytes); err != nil {
+		// 发送失败，需要清理pending request
+		p.removePendingRequest(messageID)
+		return fmt.Errorf("failed to send message to charge point %s: %w", chargePointID, err)
+	}
+
+	p.logger.Infof("Successfully sent downlink command %s to %s with message ID %s", action, chargePointID, messageID)
+	return nil
+}
+
+// registerPendingRequest 注册待处理请求
+func (p *Processor) registerPendingRequest(messageID, chargePointID, action string, payload interface{}) error {
+	p.requestMutex.Lock()
+	defer p.requestMutex.Unlock()
+
+	// 检查是否已存在相同的消息ID
+	if _, exists := p.pendingRequests[messageID]; exists {
+		return fmt.Errorf("message ID %s already exists in pending requests", messageID)
+	}
+
+	// 创建pending request
+	pendingReq := &PendingRequest{
+		MessageID:     messageID,
+		ChargePointID: chargePointID,
+		Action:        action,
+		Payload:       payload,
+		ResponseChan:  make(chan *ProcessorResponse, 1),
+		CreatedAt:     time.Now(),
+		Timeout:       p.config.RequestTimeout,
+	}
+
+	// 注册到映射中
+	p.pendingRequests[messageID] = pendingReq
+
+	p.logger.Debugf("Registered pending request for message ID %s, action %s, charge point %s",
+		messageID, action, chargePointID)
+	return nil
+}
+
+// removePendingRequest 移除待处理请求
+func (p *Processor) removePendingRequest(messageID string) {
+	p.requestMutex.Lock()
+	defer p.requestMutex.Unlock()
+
+	if req, exists := p.pendingRequests[messageID]; exists {
+		// 关闭响应通道
+		close(req.ResponseChan)
+		// 从映射中删除
+		delete(p.pendingRequests, messageID)
+		p.logger.Debugf("Removed pending request for message ID %s", messageID)
+	}
+}
+
+// SetMessageSender 设置消息发送器（用于依赖注入）
+func (p *Processor) SetMessageSender(sender MessageSender) {
+	p.messageSender = sender
+	p.logger.Debug("Message sender configured for processor")
 }
