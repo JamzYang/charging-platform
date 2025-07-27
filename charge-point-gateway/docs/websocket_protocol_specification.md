@@ -37,8 +37,9 @@ ws://host:port/ocpp/{charge_point_id}
 - **生产环境**: `wss://gateway.example.com:8080/ocpp/{charge_point_id}` (启用TLS)
 
 ### 1.2 认证方式
-- **子协议**: 必须指定 `ocpp1.6`
+- **子协议**: 推荐指定 `ocpp1.6`（如未指定，系统将使用默认版本）
 - **握手头**: `Sec-WebSocket-Protocol: ocpp1.6`
+- **容错机制**: 系统支持在未协商到有效子协议时自动使用默认版本
 - **生产环境**: 支持TLS客户端证书认证
 
 **连接示例：**
@@ -261,10 +262,16 @@ Available → Preparing → Charging → Finishing → Available
 | `GroundFailure` | 接地故障 | 安全检测异常 |
 | `HighTemperature` | 高温故障 | 温度过高 |
 | `InternalError` | 内部错误 | 系统内部异常 |
+| `LocalListConflict` | 本地列表冲突 | 授权列表冲突 |
+| `OtherError` | 其他错误 | 未分类错误 |
 | `OverCurrentFailure` | 过流故障 | 电流超限 |
 | `OverVoltage` | 过压故障 | 电压超限 |
 | `PowerMeterFailure` | 电表故障 | 计量异常 |
+| `PowerSwitchFailure` | 电源开关故障 | 开关控制异常 |
+| `ReaderFailure` | 读卡器故障 | RFID读取异常 |
+| `ResetFailure` | 重启失败 | 设备重启异常 |
 | `UnderVoltage` | 欠压故障 | 电压不足 |
+| `WeakSignal` | 信号弱 | 通信信号不良 |
 
 ### 5.2 错误消息示例
 ```json
@@ -375,7 +382,7 @@ MAX_CONNECTIONS=100000
 
 ### 7.2 测试环境
 ```bash
-# WebSocket连接地址  
+# WebSocket连接地址
 WS_URL=ws://localhost:8081/ocpp/{charge_point_id}
 
 # API端点
@@ -384,7 +391,14 @@ CONNECTIONS_URL=http://localhost:8081/connections
 
 # 服务器配置
 SERVER_PORT=8081
-MAX_CONNECTIONS=25000
+SERVER_READ_TIMEOUT=300s    # 延长读取超时到5分钟，匹配OCPP心跳间隔
+SERVER_WRITE_TIMEOUT=60s
+MAX_CONNECTIONS=25000       # 设置为25000以支持2万连接测试
+
+# WebSocket配置
+WEBSOCKET_PING_INTERVAL=30s
+WEBSOCKET_PONG_TIMEOUT=10s
+WEBSOCKET_IDLE_TIMEOUT=15m
 ```
 
 ### 7.3 生产环境
@@ -463,15 +477,34 @@ ws.onclose = (event) => {
 ```
 
 ### 9.3 心跳机制
+
+#### OCPP层心跳（应用层）
 ```javascript
-// 心跳发送示例
+// OCPP Heartbeat消息发送示例
 const sendHeartbeat = () => {
   const heartbeat = [2, generateMessageId(), "Heartbeat", {}];
   ws.send(JSON.stringify(heartbeat));
 };
 
-// 每300秒发送一次心跳
+// 每300秒发送一次OCPP心跳（根据BootNotification响应的interval字段）
 setInterval(sendHeartbeat, 300000);
+```
+
+#### WebSocket层心跳（传输层）
+```javascript
+// WebSocket Ping/Pong机制由网关自动处理
+// 网关每30秒向所有连接发送WebSocket Ping帧
+// 客户端应自动响应Pong帧以保持连接活跃
+// 如果10秒内未收到Pong响应，连接将被关闭
+
+// 客户端通常不需要手动处理，但可以监听事件
+ws.addEventListener('ping', (event) => {
+  console.log('Received WebSocket ping');
+});
+
+ws.addEventListener('pong', (event) => {
+  console.log('Received WebSocket pong');
+});
 ```
 
 ### 9.4 状态同步
@@ -614,6 +647,15 @@ curl http://localhost:8080/connections
 
 ---
 
-**文档版本**: v1.0.0  
-**最后更新**: 2024-01-14  
+**文档版本**: v1.1.0
+**最后更新**: 2025-01-27
 **维护者**: 充电桩网关开发团队
+
+## 更新日志
+
+### v1.1.0 (2025-01-27)
+- 补充了缺失的错误码定义（LocalListConflict、OtherError、PowerSwitchFailure等）
+- 修正了子协议验证机制的描述，增加了容错机制说明
+- 更新了测试环境的实际配置参数
+- 区分了OCPP层心跳和WebSocket层心跳机制
+- 增加了WebSocket Ping/Pong机制的详细说明
