@@ -8,6 +8,9 @@ app:
   version: "1.0.0"
   profile: "local"  # 默认环境：dev, test, prod, local
 
+# Pod ID - 网关实例标识
+pod_id: "gateway-pod-local"
+
 # 服务器配置
 server:
   host: "0.0.0.0"

@@ -94,7 +94,7 @@ func TestIntegrationEventFormat_MeterValues(t *testing.T) {
 	// 验证第一个电表值（能量）
 	firstMeterValue, ok := meterValuesPayload[0].(map[string]interface{})
 	require.True(t, ok)
-	assert.Equal(t, "2025-08-03T08:34:02Z", firstMeterValue["timestamp"])
+	assert.Equal(t, "1722672842280", firstMeterValue["timestamp"])
 
 	firstSampledValue, ok := firstMeterValue["sampledValue"].(map[string]interface{})
 	require.True(t, ok)

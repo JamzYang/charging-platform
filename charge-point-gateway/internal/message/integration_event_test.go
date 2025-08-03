@@ -66,8 +66,8 @@ func TestIntegrationEventConverter_ConvertToIntegrationFormat(t *testing.T) {
 
 	// 验证第一个电表值
 	firstMeterValue := meterValuesPayload[0]
-	assert.Equal(t, "2025-08-03T08:34:02Z", firstMeterValue["timestamp"])
-	
+	assert.Equal(t, "1754210042000", firstMeterValue["timestamp"])
+
 	sampledValue, ok := firstMeterValue["sampledValue"].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "1234.56", sampledValue["value"])

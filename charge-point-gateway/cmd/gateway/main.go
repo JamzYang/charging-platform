@@ -199,24 +199,12 @@ func main() {
 
 	// 启动业务事件处理器 - 将分发器的事件发送到Kafka
 	go func() {
-		log.Info("Business event handler started")
+		log.Info("Business event handler started with integration event converter")
 		for event := range dispatcher.GetEventChannel() {
 			if err := producer.PublishEvent(event); err != nil {
 				log.Errorf("Failed to publish event to Kafka: %v", err)
 			} else {
-				log.Debugf("Published event %s from charge point %s to Kafka", event.GetType(), event.GetChargePointID())
-			}
-		}
-	}()
-
-	// 启动业务事件处理器 - 将分发器的事件发送到Kafka
-	go func() {
-		log.Info("Business event handler started")
-		for event := range dispatcher.GetEventChannel() {
-			if err := producer.PublishEvent(event); err != nil {
-				log.Errorf("Failed to publish event to Kafka: %v", err)
-			} else {
-				log.Debugf("Published event %s from charge point %s to Kafka", event.GetType(), event.GetChargePointID())
+				log.Debugf("Published integration event %s from charge point %s to Kafka", event.GetType(), event.GetChargePointID())
 			}
 		}
 	}()

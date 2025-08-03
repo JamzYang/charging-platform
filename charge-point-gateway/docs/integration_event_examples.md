@@ -35,13 +35,13 @@
   "eventType": "transaction.meter_values",
   "chargePointId": "CP673b4f7acfdb428a8e7a",
   "gatewayId": "gateway-pod-xyz",
-  "timestamp": "2025-08-03T08:34:02Z",
+  "timestamp": "1722672842283",
   "payload": {
     "connectorId": 1,
     "transactionId": 634,
     "meterValues": [
       {
-        "timestamp": "2025-08-03T08:34:02Z",
+        "timestamp": "1722672842283",
         "sampledValue": {
           "value": "95.70",
           "measurand": "Energy.Active.Import.Register",
@@ -49,7 +49,7 @@
         }
       },
       {
-        "timestamp": "2025-08-03T08:34:02Z",
+        "timestamp": "1722672842283",
         "sampledValue": {
           "value": "7958",
           "measurand": "Power.Active.Import",
@@ -57,7 +57,7 @@
         }
       },
       {
-        "timestamp": "2025-08-03T08:34:02Z",
+        "timestamp": "1722672842283",
         "sampledValue": {
           "value": "228.0",
           "measurand": "Voltage",
@@ -78,7 +78,7 @@
   "eventType": "charge_point.connected",
   "chargePointId": "CP-001",
   "gatewayId": "gateway-pod-abc",
-  "timestamp": "2025-08-03T08:49:59Z",
+  "timestamp": "1722673799000",
   "payload": {
     "model": "Model-X",
     "vendor": "Vendor-A",
@@ -96,7 +96,7 @@
   "eventType": "connector.status_changed",
   "chargePointId": "CP-002",
   "gatewayId": "gateway-pod-def",
-  "timestamp": "2025-08-03T08:49:59Z",
+  "timestamp": "1722673799000",
   "payload": {
     "connectorId": 1,
     "status": "Charging",
@@ -115,7 +115,7 @@
   "eventType": "charge_point.disconnected",
   "chargePointId": "CP-003",
   "gatewayId": "gateway-pod-789",
-  "timestamp": "2025-08-03T08:50:00Z",
+  "timestamp": "1722673800000",
   "payload": {
     "reason": "tcp_connection_closed"
   }
@@ -131,7 +131,7 @@
   "eventType": "transaction.started",
   "chargePointId": "CP-004",
   "gatewayId": "gateway-pod-123",
-  "timestamp": "2025-08-03T08:50:00Z",
+  "timestamp": "1722673800000",
   "payload": {
     "connectorId": 1,
     "transactionId": 12345,
@@ -150,12 +150,12 @@
   "eventType": "transaction.stopped",
   "chargePointId": "CP-005",
   "gatewayId": "gateway-pod-456",
-  "timestamp": "2025-08-03T08:50:00Z",
+  "timestamp": "1722673800000",
   "payload": {
     "transactionId": 12345,
     "reason": "Remote",
     "meterStopWh": 15800,
-    "stopTimestamp": "2025-08-03T08:50:00Z"
+    "stopTimestamp": "1722673800000"
   }
 }
 ```
@@ -169,7 +169,7 @@
   "eventType": "command.response",
   "chargePointId": "CP-006",
   "gatewayId": "gateway-pod-789",
-  "timestamp": "2025-08-03T08:50:00Z",
+  "timestamp": "1722673800000",
   "payload": {
     "commandId": "cmd-uuid-123",
     "commandName": "RemoteStartTransaction",
@@ -199,7 +199,7 @@
 4. **数据格式优化**：
    - 电表值格式符合 OCPP 标准
    - 连接器状态使用首字母大写格式
-   - 时间戳统一使用 RFC3339 格式
+   - 时间戳统一使用 Unix 毫秒时间戳字符串格式
 
 5. **网关实例标识**：
    - 每个事件都包含 `gatewayId` 字段，标识处理该事件的网关实例

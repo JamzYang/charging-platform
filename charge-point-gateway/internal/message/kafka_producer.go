@@ -41,7 +41,7 @@ func (c *IntegrationEventConverter) ConvertToIntegrationFormat(event events.Even
 		EventType:     c.mapEventType(event.GetType()),
 		ChargePointID: event.GetChargePointID(),
 		GatewayID:     c.gatewayID,
-		Timestamp:     event.GetTimestamp().Format(time.RFC3339),
+		Timestamp:     fmt.Sprintf("%d", event.GetTimestamp().UnixMilli()), // 转换为毫秒字符串
 		Payload:       c.convertPayload(event),
 	}
 }
@@ -115,7 +115,7 @@ func (c *IntegrationEventConverter) convertPayload(event events.Event) interface
 			}
 
 			meterValue := map[string]interface{}{
-				"timestamp":    mv.Timestamp.Format(time.RFC3339),
+				"timestamp":    fmt.Sprintf("%d", mv.Timestamp.UnixMilli()), // 转换为毫秒字符串
 				"sampledValue": sampledValue,
 			}
 			meterValues = append(meterValues, meterValue)
@@ -140,7 +140,7 @@ func (c *IntegrationEventConverter) convertPayload(event events.Event) interface
 			payload["meterStopWh"] = *e.TransactionInfo.MeterStop
 		}
 		if e.TransactionInfo.EndTime != nil {
-			payload["stopTimestamp"] = e.TransactionInfo.EndTime.Format(time.RFC3339)
+			payload["stopTimestamp"] = fmt.Sprintf("%d", e.TransactionInfo.EndTime.UnixMilli()) // 转换为毫秒字符串
 		}
 		return payload
 	default:
@@ -250,12 +250,23 @@ func (p *KafkaProducer) PublishEvent(event events.Event) error {
 	// 4. 发送消息
 	p.producer.Input() <- msg
 
-	log.Debug().
+	// 5. 详细日志打印 - 包含完整的消息内容
+	log.Info().
 		Str("eventId", integrationEvent.EventID).
 		Str("eventType", integrationEvent.EventType).
 		Str("chargePointId", integrationEvent.ChargePointID).
 		Str("gatewayId", integrationEvent.GatewayID).
-		Msg("Publishing integration event to Kafka")
+		Str("topic", p.topic).
+		Str("messageKey", event.GetChargePointID()).
+		RawJSON("integrationEventPayload", eventData).
+		Msg("📤 KAFKA MESSAGE SENT - Integration Event Published")
+
+	// 6. 额外打印原始事件信息用于对比
+	originalEventData, _ := event.ToJSON()
+	log.Debug().
+		Str("originalEventType", string(event.GetType())).
+		RawJSON("originalEventPayload", originalEventData).
+		Msg("📋 Original Event (for comparison)")
 
 	return nil
 }
