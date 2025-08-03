@@ -108,16 +108,26 @@ func TestEventProducerInterface(t *testing.T) {
 	assert.Nil(t, producer) // 确保赋值成功，但 producer 仍然是 nil
 }
 
-// TestNewKafkaProducer_Failure 编写一个失败的测试，用于测试 NewKafkaProducer 函数
-func TestNewKafkaProducer_Failure(t *testing.T) {
-	// 模拟一个无法连接的 Kafka broker 地址
+// TestNewKafkaProducer_Success 测试 NewKafkaProducer 函数的成功创建
+func TestNewKafkaProducer_Success(t *testing.T) {
+	// 模拟 Kafka broker 地址
 	brokers := []string{"localhost:9092"}
 	topic := "test-topic"
+	gatewayID := "test-gateway-id"
 
-	// 预期 NewKafkaProducer 会返回错误，因为没有实际的 Kafka broker 运行
-	producer, err := NewKafkaProducer(brokers, topic)
-	assert.Error(t, err, "Expected an error when Kafka is not running")
-	assert.Nil(t, producer, "Expected producer to be nil on error")
+	// NewKafkaProducer 应该成功创建，即使没有实际的 Kafka broker 运行
+	// 因为 sarama 的 AsyncProducer 是延迟连接的
+	producer, err := NewKafkaProducer(brokers, topic, gatewayID)
+	assert.NoError(t, err, "Expected no error when creating producer")
+	assert.NotNil(t, producer, "Expected producer to be created")
+	assert.Equal(t, topic, producer.topic)
+	assert.NotNil(t, producer.converter)
+	assert.Equal(t, gatewayID, producer.converter.gatewayID)
+
+	// 清理资源
+	if producer != nil {
+		producer.Close()
+	}
 }
 
 // TestPublishEvent_Failure 编写一个失败的测试，用于测试 PublishEvent 方法
@@ -126,8 +136,9 @@ func TestPublishEvent_Failure(t *testing.T) {
 	mockProducer.On("Input").Return(make(chan *sarama.ProducerMessage)) // 模拟 Input channel
 
 	kp := &KafkaProducer{
-		producer: mockProducer,
-		topic:    "test-topic",
+		producer:  mockProducer,
+		topic:     "test-topic",
+		converter: NewIntegrationEventConverter("test-gateway"),
 	}
 
 	badEvent := &UnserializableEvent{
@@ -142,7 +153,7 @@ func TestPublishEvent_Failure(t *testing.T) {
 func TestClose_Failure(t *testing.T) {
 	mockProducer := NewMockAsyncProducer()
 	mockProducer.On("Close").Return(assert.AnError) // 模拟 Close 返回错误
-	mockProducer.On("AsyncClose").Return(nil)        // 模拟 AsyncClose
+	mockProducer.On("AsyncClose").Return(nil)       // 模拟 AsyncClose
 
 	kp := &KafkaProducer{
 		producer: mockProducer,

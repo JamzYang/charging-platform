@@ -8,7 +8,7 @@ app:
 # 服务器配置 - 本地测试环境
 server:
   host: "0.0.0.0"
-  port: 8081
+  port: 8080
   websocket_path: "/ocpp"
   read_timeout: "300s"    # 延长读取超时到5分钟，匹配OCPP心跳间隔
   write_timeout: "60s"
@@ -47,7 +47,7 @@ kafka:
 
 # 日志配置 - 本地测试环境
 log:
-  level: "warn"
+  level: "debug"
   format: "console"
   output: "stdout"
   async: true  # 启用异步日志以提高性能

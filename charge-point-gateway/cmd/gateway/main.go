@@ -55,11 +55,11 @@ func main() {
 	log.Info("Storage initialized")
 
 	// 4. 初始化 Kafka 生产者
-	producer, err := message.NewKafkaProducer(cfg.Kafka.Brokers, cfg.Kafka.UpstreamTopic)
+	producer, err := message.NewKafkaProducer(cfg.Kafka.Brokers, cfg.Kafka.UpstreamTopic, cfg.PodID)
 	if err != nil {
 		log.Fatalf("Failed to initialize Kafka producer: %v", err)
 	}
-	log.Info("Kafka producer initialized")
+	log.Infof("Kafka producer initialized with gateway ID: %s", cfg.PodID)
 
 	// 5. 初始化 Kafka 消费者
 	consumer, err := message.NewKafkaConsumer(cfg.Kafka.Brokers, cfg.Kafka.ConsumerGroup, cfg.Kafka.DownstreamTopic, cfg.PodID, cfg.Kafka.PartitionNum, log)

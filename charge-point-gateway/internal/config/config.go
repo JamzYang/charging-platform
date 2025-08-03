@@ -220,6 +220,7 @@ func setupEnvironmentVariables() {
 	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
 
 	// 手动绑定关键环境变量（确保映射正确）
+	viper.BindEnv("pod_id", "POD_ID")
 	viper.BindEnv("redis.addr", "REDIS_ADDR")
 	viper.BindEnv("server.port", "SERVER_PORT")
 	viper.BindEnv("log.level", "LOG_LEVEL")
@@ -335,6 +336,9 @@ func setDefaults() {
 	viper.SetDefault("app.name", "charge-point-gateway")
 	viper.SetDefault("app.version", "1.0.0")
 	viper.SetDefault("app.profile", "local")
+
+	// Pod ID - 默认值，通常通过环境变量覆盖
+	viper.SetDefault("pod_id", "gateway-pod-default")
 
 	// 服务器配置
 	viper.SetDefault("server.host", "0.0.0.0")
