@@ -47,7 +47,7 @@ kafka:
 
 # 日志配置 - 本地测试环境
 log:
-  level: "warn"
+  level: "debug"
   format: "console"
   output: "stdout"
   async: true  # 启用异步日志以提高性能
